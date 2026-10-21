@@ -107,6 +107,30 @@ _PROFILES: list[dict[str, Any]] = [
         "brand_anchors": ["JISULIFE neck fan", "TORRAS neck fan"],
     },
     {
+        "name": "lip_balm",
+        "match": [
+            "润唇膏", "护唇膏", "唇膏", "唇膜", "lip balm", "lipbalm", "chapstick",
+            "balsamo labial", "bálsamo labial", "protetor labial", "lip moisturizer",
+        ],
+        "definition": (
+            "管状/罐状润唇膏或护唇膏（涂在嘴唇上保湿，常见旋转管、小罐）；"
+            "排除眉笔、眉粉、眼线笔、睫毛膏、口红（色泽浓妆口红）、唇釉、唇泥、粉底、腮红等其它美妆。"
+        ),
+        "prefer_queries": [
+            'tiktok "lip balm" review apply',
+            'tiktok "bálsamo labial" resenha',
+            'tiktok "protetor labial" review',
+            'site:tikwm.com/video "lip balm"',
+            'site:urlebird.com/video "lip balm" moisturiz',
+        ],
+        "reject_markers": [
+            "eyebrow pencil", "eyebrow pen", "brow pencil", "brow pen", "eyeliner", "mascara",
+            "眉笔", "眉粉", "眼线", "睫毛膏", "lipstick", "lip gloss", "lip tint", "唇釉", "唇泥",
+            "lápiz de cejas", "lapiz de cejas", "lápis de sobrancelha", "rimel",
+        ],
+        "brand_anchors": ["Blistex", "Carmex", "EOS lip balm", "Burt's Bees"],
+    },
+    {
         "name": "cleaning_brush",
         "match": [
             "清洁刷", "洗碗刷", "锅刷", "cleaning brush", "dish brush",

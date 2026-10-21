@@ -20,8 +20,8 @@
 
 逐格判断：
 - product_visible：清楚看得到商品本体；product_prominent：商品是画面主体；
-- same_product：看到的商品是否与上面的形态定义一致（台式料理机、带底座搅拌机等算 false）；看不到商品时填 null；
-- source_burned_text：除我们的包装文字以外，原片烧录的字幕/贴纸/标题/价格文字："none" / "small" / "heavy"；
+- same_product：看到的商品是否与上面的形态定义/商品名称一致（台式料理机、带底座搅拌机、以及美妆错品如「请求润唇膏却是眉笔/口红」等一律 false）；看不到商品时填 null；
+- source_burned_text：除我们的包装文字以外，原片烧录的字幕/贴纸/标题/价格文字（含英文等任何可读字母字幕）："none" / "small" / "heavy"；
 - watermark：TikTok/平台/网站水印；
 - lifestyle_only：只有人物/风景，商品看不清；
 - note：简短说明问题。

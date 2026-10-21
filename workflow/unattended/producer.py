@@ -39,6 +39,41 @@ class CodexModel:
 
 DEFAULT_TIMEOUT_SECONDS = 900.0
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+# Delivery resume: a finished mp4 that already landed in delivery/ must not trigger a full re-cut
+# just because ledger/state write failed afterward (Windows e2e: ~3h wasted on re-cuts).
+MIN_DELIVERY_BYTES = 300_000
+# Review issues that mean the *footage* is bad — re-editing the same clips cannot fix them.
+NON_RETRYABLE_REVIEW_MARKERS = (
+    "不是同款商品",
+    "同款商品",
+    "原片烧录文字",
+    "烧录文字过多",
+    "错品",
+)
+
+
+def qualifying_delivery_videos(delivery_dir: Path, *, min_bytes: int = MIN_DELIVERY_BYTES) -> list[Path]:
+    """Return delivery mp4/mov files large enough to count as a finished cut."""
+    if not delivery_dir.is_dir():
+        return []
+    found: list[Path] = []
+    for path in sorted(delivery_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in VIDEO_SUFFIXES:
+            continue
+        try:
+            if path.stat().st_size >= min_bytes:
+                found.append(path)
+        except OSError:
+            continue
+    return found
+
+
+def review_issues_need_new_footage(issues: list[str]) -> bool:
+    """True when auto-review failed for wrong-product / source burned text — do not ChatCut-retry."""
+    blob = "；".join(str(i) for i in issues)
+    return any(marker in blob for marker in NON_RETRYABLE_REVIEW_MARKERS)
+
+
 def _default_chatcut_agent_log() -> Path:
     from workflow.chatcut.health import default_chatcut_agent_log
 
@@ -334,7 +369,8 @@ class ProduceOptions:
     discover_max_searches: int = 5
     seed_dir: Path | None = None
     # Post-export auto-review: re-edit at most this many times before giving up (never deliver a failing cut).
-    review_retries: int = 2
+    # Keep low: each retry is a full Codex+ChatCut pass (Windows e2e saw ~29min wasted in 4 retries).
+    review_retries: int = 1
     reviewer: Callable[..., Any] | None = None
     min_clips: int = 3
     collector: Callable[..., Any] | None = None
@@ -427,24 +463,59 @@ class Producer:
         clips: list[dict[str, Any]] = []
         extra: dict[str, str] | None = None
         template_path = None if production else CANARY_PROMPT_TEMPLATE
+
+        # P0-1: if delivery already has a qualifying mp4, treat as success — never re-cut.
+        existing_delivery = qualifying_delivery_videos(delivery_dir)
+        if existing_delivery:
+            delivered = [str(p) for p in existing_delivery]
+            prior_clips = self._load_collection_clips(task_dir)
+            reason = (
+                f"断点续跑：delivery 已有合格成片 {len(delivered)} 个，跳过重剪"
+                f"（{', '.join(Path(p).name for p in delivered)}）"
+            )
+            stages["resume_delivery"] = {"ok": True, "delivery_paths": delivered, "skipped_recut": True}
+            self._update_state(
+                task_id, workflow_job_id, status="produced", reason=reason,
+                delivery_paths=delivered, renderer="chatcut_resumed",
+                codex_returncode=None, audit_path=audit_path,
+            )
+            self._log(reason)
+            if prior_clips:
+                self._record_used_footage(request, prior_clips, task_id)
+            return ProduceResult(
+                status="produced", reason=reason, delivery_paths=delivered,
+                renderer="chatcut_resumed", audit_path=str(audit_path) if audit_path else None,
+            )
+
         if production:
-            collect_started = time.time()
-            self._log("采集阶段开始：Codex web 检索 TikTok 候选 → yt-dlp 下载 → 校验。")
-            try:
-                collection = self._run_collector(request, task_dir)
-            except Exception as exc:
-                stages["collect"] = {"ok": False, "seconds": round(time.time() - collect_started, 1), "error": str(exc)}
-                return self._fail(task_id, workflow_job_id, f"采集阶段异常：{exc}", delivery_paths=[], audit_path=audit_path)
-            stages["collect"] = {
-                "ok": collection.ok, "seconds": round(time.time() - collect_started, 1),
-                "timings": collection.timings, "reason": collection.reason,
-                "manifest": collection.manifest_path, "clips": len(collection.clips),
-                "candidates": len(collection.candidates),
-            }
-            if not collection.ok:
-                return self._fail(task_id, workflow_job_id, f"采集阶段失败：{collection.reason}",
-                                  delivery_paths=[], audit_path=audit_path)
-            self._log(collection.reason)
+            collection = None
+            reused_manifest = self._load_ok_collection(task_dir)
+            if reused_manifest is not None:
+                collection = reused_manifest
+                stages["collect"] = {
+                    "ok": True, "seconds": 0.0, "resumed": True,
+                    "reason": collection.reason, "manifest": collection.manifest_path,
+                    "clips": len(collection.clips), "candidates": len(collection.candidates),
+                }
+                self._log(f"断点续跑：复用已有采集结果（{len(collection.clips)} 条），跳过采集。")
+            else:
+                collect_started = time.time()
+                self._log("采集阶段开始：Codex web 检索 TikTok 候选 → yt-dlp 下载 → 校验。")
+                try:
+                    collection = self._run_collector(request, task_dir)
+                except Exception as exc:
+                    stages["collect"] = {"ok": False, "seconds": round(time.time() - collect_started, 1), "error": str(exc)}
+                    return self._fail(task_id, workflow_job_id, f"采集阶段异常：{exc}", delivery_paths=[], audit_path=audit_path)
+                stages["collect"] = {
+                    "ok": collection.ok, "seconds": round(time.time() - collect_started, 1),
+                    "timings": collection.timings, "reason": collection.reason,
+                    "manifest": collection.manifest_path, "clips": len(collection.clips),
+                    "candidates": len(collection.candidates),
+                }
+                if not collection.ok:
+                    return self._fail(task_id, workflow_job_id, f"采集阶段失败：{collection.reason}",
+                                      delivery_paths=[], audit_path=audit_path)
+                self._log(collection.reason)
             from dataclasses import asdict as _asdict
             clips = [_asdict(c) for c in collection.clips]
             footage_for_prompt = [
@@ -574,10 +645,24 @@ class Producer:
                     self._log(f"成片自动复核通过（第 {attempt} 次剪辑）。")
                     break
                 self._log(f"成片自动复核未通过（第 {attempt} 次）：{'；'.join(issues)}")
+                # Wrong-product / source burned text cannot be fixed by re-editing the same clips.
+                if review_issues_need_new_footage(issues):
+                    return self._fail(
+                        task_id, workflow_job_id,
+                        f"成片复核判定素材不合格（错品/原片烧录文字），不重剪同一批素材："
+                        f"{'；'.join(issues)}。请换素材后重投。",
+                        delivery_paths=[], audit_path=audit_path, codex_returncode=completed.returncode)
             if attempt == max_attempts:
                 return self._fail(
                     task_id, workflow_job_id,
                     f"成片复核未通过（已自动重剪 {max_attempts - 1} 次，不交付）：{'；'.join(issues)}",
+                    delivery_paths=[], audit_path=audit_path, codex_returncode=completed.returncode)
+            # Also stop early when verify itself already flagged burned-text / wrong-product style reasons.
+            if review_issues_need_new_footage(issues):
+                return self._fail(
+                    task_id, workflow_job_id,
+                    f"成片校验判定素材不合格（错品/原片烧录文字），不重剪同一批素材："
+                    f"{'；'.join(issues)}。请换素材后重投。",
                     delivery_paths=[], audit_path=audit_path, codex_returncode=completed.returncode)
             attempt_prompt = self._feedback_prompt(prompt, issues, result_path, exports_dir, task_id,
                                                    str(request.get("market") or "MX"), attempt)
@@ -685,9 +770,9 @@ class Producer:
         return (
             f"## 自动重剪（第 {attempt + 1} 次剪辑）\n"
             f"上一次成片在导出后自动复核**未通过**，不会交付。问题：\n- " + "\n- ".join(issues) + "\n\n"
-            f"请在**同一个工程** `{project}` 上修改（先 target_project；不要新建工程，不要删除工程）："
+            f"请在**同一个工程** `{project}` 上做**最小修改**（先 target_project 打开已有工程；**禁止** create_project 新建、**禁止**删除工程、**禁止**推倒重建整条时间线）："
             "只替换/调整有问题的镜头（换成其它 usable_segments 内的画面，开头和结尾 CTA 用 product_prominent 片段），"
-            "保持镜头首尾相接、MG 字幕 CUTS 与镜头起点一致（镜头时长变了就重写 captions.jsx 并重新 push_asset、替换 V2 的 MG item）。\n"
+            "复用已有轨道/MG/字幕资源；保持镜头首尾相接、MG 字幕 CUTS 与镜头起点一致（镜头时长变了才重写 captions.jsx 并重新 push_asset、替换 V2 的 MG item）。\n"
             f"导出到新路径 `{new_export}`（不要覆盖旧文件），并重写结果文件（export_paths 只写新路径，shots 按新时间线更新）。\n\n"
             f"上一次的结果：\n```json\n{json.dumps(previous, ensure_ascii=False, indent=2)[:6000]}\n```\n\n"
             "以下是原始任务说明（规则全部仍然有效）：\n\n" + base_prompt
@@ -721,6 +806,59 @@ class Producer:
                 self._log(f"已用素材台账更新（成片已交付）：{ledger}（{len(clips)} 条）")
         except Exception as exc:  # ledger must never break a delivered task
             self._log(f"警告：已用素材台账写入失败（不影响本次交付）：{exc}")
+
+    def _load_ok_collection(self, task_dir: Path):
+        """Reuse a prior successful collection.json so resume does not re-download."""
+        manifest = task_dir / "collection" / "footage" / "collection.json"
+        if not manifest.is_file():
+            return None
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return None
+        clips_data = payload.get("clips") or []
+        if not clips_data:
+            return None
+        for row in clips_data:
+            if not Path(str(row.get("path") or "")).is_file():
+                return None
+        from .collect import Clip, CollectResult
+
+        clip_fields = set(Clip.__dataclass_fields__)
+        clips = []
+        for row in clips_data:
+            if not isinstance(row, dict):
+                return None
+            kwargs = {k: row[k] for k in clip_fields if k in row}
+            try:
+                clips.append(Clip(**kwargs))
+            except TypeError:
+                return None
+        return CollectResult(
+            ok=True,
+            reason=str(payload.get("reason") or "复用已有采集"),
+            clips=clips,
+            candidates=[],
+            keywords=list(payload.get("keywords") or []),
+            manifest_path=str(manifest),
+            timings=dict(payload.get("timings") or {}),
+            product_definition=str(payload.get("product_definition") or ""),
+            screened_out=[],
+        )
+
+    @staticmethod
+    def _load_collection_clips(task_dir: Path) -> list[dict[str, Any]]:
+        manifest = task_dir / "collection" / "footage" / "collection.json"
+        if not manifest.is_file():
+            return []
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        clips = payload.get("clips") if isinstance(payload, dict) else None
+        return list(clips) if isinstance(clips, list) else []
 
     def _run_collector(self, request: dict[str, Any], task_dir: Path):
         from .collect import collect_footage

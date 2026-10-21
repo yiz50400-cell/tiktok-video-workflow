@@ -128,11 +128,19 @@ CROP_REGIONS = ("top", "bottom")
 
 
 def frame_crop(frame: dict[str, Any]) -> str | None | bool:
-    """None = usable as is; "top"/"bottom" = usable after cropping that text band; False = unusable."""
+    """None = usable as is; "top"/"bottom" = usable after cropping that text band; False = unusable.
+
+    Heavy burned-in text (readable subtitles / big stickers, any language including English)
+    is never salvageable by crop — those clips must be swapped before ChatCut, not edited around.
+    Only *small* corner text at top/bottom with crop_ok may be kept with a crop hint.
+    """
     if not frame.get("product_visible") or frame.get("watermark") or frame.get("lifestyle_only"):
         return False
-    if str(frame.get("burned_text") or "none") == "none":
+    burned = str(frame.get("burned_text") or "none")
+    if burned == "none":
         return None
+    if burned == "heavy":
+        return False
     region = str(frame.get("text_region") or "")
     if region in CROP_REGIONS and frame.get("crop_ok"):
         return region
@@ -170,6 +178,7 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
                              "prominent_times": [t] if prominent else [], "crop": crop})
     rejected_frames = {
         "burned_text": sum(1 for f in by_index.values() if str(f.get("burned_text") or "none") != "none"),
+        "burned_text_heavy": sum(1 for f in by_index.values() if str(f.get("burned_text") or "none") == "heavy"),
         "burned_text_croppable": sum(1 for f in by_index.values() if frame_crop(f) in CROP_REGIONS),
         "watermark": sum(1 for f in by_index.values() if f.get("watermark")),
         "lifestyle_only": sum(1 for f in by_index.values() if f.get("lifestyle_only")),
@@ -178,6 +187,16 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
     if not segments:
         return {"accepted": False, "usable_segments": [], "frames": frames, "rejected_frames": rejected_frames,
                 "reason": f"无可用片段（帧问题统计 {rejected_frames}）"}
+    # Clip-level burn gate: too much source text (esp. English/Latin burned subtitles) must
+    # not enter ChatCut — swap footage instead of hoping edit/crop can hide it.
+    n_frames = max(len(by_index), 1)
+    heavy_n = rejected_frames["burned_text_heavy"]
+    burned_n = rejected_frames["burned_text"]
+    usable_s = sum(s["end_s"] - s["start_s"] for s in segments)
+    if heavy_n >= 3 or burned_n >= max(5, (n_frames + 1) // 2) or (burned_n >= 4 and usable_s < 6.0):
+        return {"accepted": False, "usable_segments": [], "frames": frames, "rejected_frames": rejected_frames,
+                "reason": (f"原片烧录文字过多（heavy={heavy_n}, burned={burned_n}/{n_frames}, "
+                           f"可用 {usable_s:.1f}s）；换素材，勿进 ChatCut")}
     return {"accepted": True, "usable_segments": segments, "frames": frames, "rejected_frames": rejected_frames,
             "reason": verdict.get("reason") or "同款且有可用片段"}
 

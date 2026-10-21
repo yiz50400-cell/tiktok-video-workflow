@@ -446,25 +446,50 @@ def test_producer_reedits_after_failed_review_then_delivers(tmp_path):
 
 
 def test_producer_never_delivers_when_review_keeps_failing(tmp_path):
+    # Retryable issue (lifestyle) exhausted after default review_retries=1 → 2 reviews total.
     inbox, producer, seen = _producer_with(tmp_path, "墨西哥licuadora TikTok 无人值守 task_prod",
-                                           review_queue=[["开头镜头有原片烧录文字"]] * 3)
+                                           review_queue=[["结尾CTA镜头是纯生活方式画面，看不清商品"]] * 3)
     result = producer.produce(task_id="task_prod", workflow_job_id="job_1", request=REQ)
     assert result.status == "produce_failed" and "不交付" in result.reason
-    assert result.delivery_paths == [] and seen["reviews"] == ["review", "review_r1", "review_r2"]
+    assert result.delivery_paths == [] and seen["reviews"] == ["review", "review_r1"]
     assert not any(inbox.task_dir("task_prod").joinpath("delivery").glob("*.mp4"))
 
 
+def test_producer_fails_fast_on_burned_text_without_recut(tmp_path):
+    inbox, producer, seen = _producer_with(tmp_path, "墨西哥licuadora TikTok 无人值守 task_prod",
+                                           review_queue=[["开头镜头有原片烧录文字（英文字幕）"]])
+    result = producer.produce(task_id="task_prod", workflow_job_id="job_1", request=REQ)
+    assert result.status == "produce_failed"
+    assert "不重剪" in result.reason and "烧录文字" in result.reason
+    assert seen["reviews"] == ["review"]  # no produce_r1
+    assert "produce_r1" not in (inbox.read_task_state("task_prod")["produce"]["stages"])
+
+
 def test_apply_screening_marks_croppable_text_bands():
+    """Only *small* top/bottom text with crop_ok is salvageable; heavy is never croppable."""
     times, span = screen_times(15.0)
     decision = apply_screening({"same_product": True, "frames": _frames({
-        0: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": True, "product_prominent": True},
-        1: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": True},
+        0: {"burned_text": "small", "text_region": "bottom", "crop_ok": True, "product_prominent": True},
+        1: {"burned_text": "small", "text_region": "bottom", "crop_ok": True},
         2: {"burned_text": "heavy", "text_region": "middle", "crop_ok": False},
         3: {"burned_text": "small", "text_region": "top", "crop_ok": False}})}, times, span)
     segs = decision["usable_segments"]
+    assert decision["accepted"]
     assert segs[0]["crop"] == "bottom" and abs(segs[0]["end_s"] - 2 * span / 12) < 0.02
     assert segs[1]["crop"] is None and segs[1]["start_s"] >= 4 * span / 12 - 0.02
     assert decision["rejected_frames"]["burned_text_croppable"] == 2
+
+
+def test_apply_screening_rejects_heavy_burned_text_even_with_crop_ok():
+    times, span = screen_times(15.0)
+    # Many heavy frames (English burned subtitles) must reject the whole clip.
+    decision = apply_screening({"same_product": True, "frames": _frames({
+        i: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": True, "product_prominent": True}
+        for i in range(6)
+    })}, times, span)
+    assert not decision["accepted"]
+    assert "烧录文字过多" in decision["reason"]
+    assert decision["rejected_frames"]["burned_text_heavy"] >= 6
 
 
 def test_collect_runs_supplement_round_when_screening_insufficient(tmp_path):
@@ -814,3 +839,60 @@ def test_ledger_ids_match_clip_ids_including_reused(tmp_path):
     assert set(ids) <= UsedFootageLedger.load(seed_dir, req, profile)
     entries = [e for e in UsedFootageLedger.entries(seed_dir) if e["task_id"] == "t2"]
     assert {e["video_id"] for e in entries} == set(ids) - set(old_ids)  # re-used ones are not duplicated
+
+
+# --- resume / form hints (2026-10-21 Windows e2e speed) -----------------------
+from workflow.unattended.producer import qualifying_delivery_videos, review_issues_need_new_footage
+
+
+def test_infer_form_hints_lip_balm_rejects_eyebrow_pencil():
+    hints = infer_form_hints("巴西润唇膏", "真人试用种草")
+    assert hints.profile == "lip_balm"
+    assert "眉笔" in " ".join(hints.reject_markers) or "eyebrow" in " ".join(hints.reject_markers).lower()
+    reason = text_suggests_wrong_form("this is an eyebrow pencil demo", hints)
+    assert reason is not None
+    assert "eyebrow" in reason.lower() or "眉" in reason
+
+
+def test_qualifying_delivery_videos_and_resume_skips_recut(tmp_path, monkeypatch):
+    inbox = Inbox(tmp_path / "data")
+    task_id = "task_resume_001"
+    task_dir = inbox.task_dir(task_id)
+    delivery = task_dir / "delivery"
+    delivery.mkdir(parents=True)
+    good = delivery / "BR-task-chatcut.mp4"
+    good.write_bytes(b"x" * 350_000)
+    assert [p.name for p in qualifying_delivery_videos(delivery)] == [good.name]
+
+    calls = {"collect": 0, "codex": 0}
+
+    def fake_collector(*a, **k):
+        calls["collect"] += 1
+        raise AssertionError("collect must not run when delivery already has mp4")
+
+    def fake_runner(prompt, **kwargs):
+        calls["codex"] += 1
+        raise AssertionError("codex must not run when delivery already has mp4")
+
+    class Gate:
+        ok = True
+        reason = "test"
+
+    monkeypatch.setattr("workflow.unattended.producer.verify_codex_chatcut_mcp_ready", lambda: Gate())
+    producer = Producer(
+        inbox, probe=lambda: {"healthy": True}, codex_runner=fake_runner,
+        options=ProduceOptions(mode="production", project_root=tmp_path, chatcut_agent_log=None,
+                               collector=fake_collector),
+        log=lambda _m: None,
+    )
+    result = producer.produce(task_id=task_id, workflow_job_id="job_r", request=REQ)
+    assert result.status == "produced" and result.renderer == "chatcut_resumed"
+    assert calls["collect"] == 0 and calls["codex"] == 0
+    assert inbox.read_task_state(task_id)["status"] == "produced"
+    assert "跳过重剪" in result.reason
+
+
+def test_review_issues_need_new_footage_markers():
+    assert review_issues_need_new_footage(["开头镜头有原片烧录文字"])
+    assert review_issues_need_new_footage(["第2镜头不是同款商品（眉笔）"])
+    assert not review_issues_need_new_footage(["结尾CTA镜头是纯生活方式画面，看不清商品"])
