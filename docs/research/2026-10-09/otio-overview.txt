@@ -1,0 +1,501 @@
+URL: https://opentimelineio.readthedocs.io/en/latest/
+Retrieved: 2026-10-09 Asia/Shanghai
+
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" />
+  <meta name="readthedocs-addons-api-version" content="1"><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome to OpenTimelineIO’s documentation! &mdash; OpenTimelineIO 0.19.0.dev1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=03e43079" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=3f5975f8"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <script src="_static/js/versions.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Quickstart" href="tutorials/quickstart.html" /> 
+<script async type="text/javascript" src="/_/static/javascript/readthedocs-addons.js"></script><meta name="readthedocs-project-slug" content="opentimelineio" /><meta name="readthedocs-version-slug" content="latest" /><meta name="readthedocs-resolver-filename" content="/" /><meta name="readthedocs-http-status" content="200" /></head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="#" class="icon icon-home">
+            OpenTimelineIO
+          </a>
+              <div class="switch-menus">
+                <div class="version-switch"></div>
+                <div class="language-switch"></div>
+              </div>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Quick Start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html#developer-quickstart">Developer Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html#debugging-quickstart">Debugging Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html#how-to-generate-the-c-documentation">How to Generate the C++ Documentation:</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-env-variables.html">Environment Variables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otiotool.html">otiotool Tutorial</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/adapters.html">Adapters</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/feature-matrix.html">Feature Matrix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-timeline-structure.html">Timeline Structure</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/time-ranges.html">Time Ranges</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-filebundles.html">File Bundles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-an-adapter.html">Writing an OTIO Adapter</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-a-media-linker.html">Writing an OTIO Media Linker</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-a-hookscript.html">Writing a Hook Script</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-a-schemadef.html">Writing an OTIO SchemaDef Plugin</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/spatial-coordinates.html">OTIO Spatial Coordinate System</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/developing-a-new-schema.html">Schema Proposal and Development Workflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/versioning-schemas.html">Versioning Schemas</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Use Cases</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="use-cases/animation-shot-frame-ranges.html">Animation Shot Frame Ranges Changed</a></li>
+<li class="toctree-l1"><a class="reference internal" href="use-cases/conform-new-renders-into-cut.html">Conform New Renders Into The Cut</a></li>
+<li class="toctree-l1"><a class="reference internal" href="use-cases/shots-added-removed-from-cut.html">Shots Added or Removed From The Cut</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API References</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="python_reference.html">Python</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cxx/bridges.html">Language Bridges</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cxx/cxx.html">C++ Implementation Details</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cxx/older.html">Writing OTIO in C, C++ or Python (June 2018)</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Schema Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-file-format-specification.html">File Format Specification</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema.html">Serialized Data Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema.html#class-documentation">Class Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html">Serialized Data (Fields Only)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#classes">Classes</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Plugins Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-plugins.html">Plugin Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-plugins.html#manifests">Manifests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-plugins.html#core-plugins">Core Plugins</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="#">OpenTimelineIO</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="#" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Welcome to OpenTimelineIO’s documentation!</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/index.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="welcome-to-opentimelineio-s-documentation">
+<h1>Welcome to OpenTimelineIO’s documentation!<a class="headerlink" href="#welcome-to-opentimelineio-s-documentation" title="Link to this heading"></a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading"></a></h2>
+<p>OpenTimelineIO (OTIO) is an API and interchange format for editorial cut information. You can think
+of it as a modern Edit Decision List (EDL) that also includes an API for reading, writing, and
+manipulating editorial data. It also includes a plugin system for translating to/from existing
+editorial formats as well as a plugin system for linking to proprietary media storage schemas.</p>
+<p>OTIO supports clips, timing, tracks, transitions, markers, metadata, etc. but not embedded video or
+audio. Video and audio media are referenced externally. We encourage 3rd party vendors, animation
+studios and visual effects studios to work together as a community to provide adaptors for each
+video editing tool and pipeline.</p>
+</section>
+<section id="links">
+<h2>Links<a class="headerlink" href="#links" title="Link to this heading"></a></h2>
+<p><a class="reference external" href="http://opentimeline.io/">OpenTimelineIO Home Page</a></p>
+<p><a class="reference external" href="https://lists.aswf.io/g/otio-discussion">OpenTimelineIO Discussion Group</a></p>
+</section>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Quick Start</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html">Quickstart</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#install-otio">Install OTIO</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#setup-any-additional-adapters-you-may-want">Setup Any Additional Adapters You May Want</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#timeline-viewers">Timeline Viewers</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html#developer-quickstart">Developer Quickstart</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#to-build-otio-for-c-development">To build OTIO for C++ development:</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#to-build-otio-for-python-development">To build OTIO for Python development:</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#to-build-otio-for-both-c-and-python-development">To build OTIO for both C++ and Python development:</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html#debugging-quickstart">Debugging Quickstart</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#linux-gdb-lldb">Linux / GDB / LLDB</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/quickstart.html#how-to-generate-the-c-documentation">How to Generate the C++ Documentation:</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/quickstart.html#mac-linux">Mac / Linux</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-env-variables.html">Environment Variables</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-env-variables.html#plugin-configuration">Plugin Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-env-variables.html#unit-tests">Unit tests</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otiotool.html">otiotool Tutorial</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#basic-usage">Basic Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#phases">Phases</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#listing-timeline-contents">Listing Timeline Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#filtering-tracks-and-clips">Filtering Tracks and Clips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#media-information">Media Information</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#statistics-and-inspection">Statistics and Inspection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#input-output">Input/Output</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#timeline-manipulation">Timeline Manipulation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otiotool.html#otio-schema-versions">OTIO Schema Versions</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="tutorials">
+<h2>Tutorials<a class="headerlink" href="#tutorials" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/adapters.html">Adapters</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/adapters.html#built-in-adapters">Built-In Adapters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/adapters.html#batteries-included-adapters">Batteries-Included Adapters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/adapters.html#additional-adapters">Additional Adapters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/adapters.html#custom-adapters">Custom Adapters</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/architecture.html">Architecture</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#canonical-structure">Canonical Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#modules">Modules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#time-on-otio-schema-clip">Time on otio.schema.Clip</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#time-on-clips-in-containers">Time On Clips in Containers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#otio-opentime">otio.opentime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#otio-adapters">otio.adapters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#otio-media-linkers">otio.media_linkers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/architecture.html#example-scripts">Example Scripts</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/contributing.html">Contributing</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/contributing.html#contributor-license-agreement">Contributor License Agreement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/contributing.html#coding-conventions">Coding Conventions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/contributing.html#platform-support-policy">Platform Support Policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/contributing.html#git-workflow">Git Workflow</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/feature-matrix.html">Feature Matrix</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-timeline-structure.html">Timeline Structure</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-timeline-structure.html#rendering">Rendering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-timeline-structure.html#simple-cut-list">Simple Cut List</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-timeline-structure.html#transitions">Transitions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-timeline-structure.html#multiple-tracks">Multiple Tracks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-timeline-structure.html#nested-compositions">Nested Compositions</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/time-ranges.html">Time Ranges</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#clips">Clips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#tracks">Tracks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#markers">Markers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#transitions">Transitions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#gaps">Gaps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#stacks">Stacks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/time-ranges.html#timelines">Timelines</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-filebundles.html">File Bundles</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-filebundles.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-filebundles.html#otioz-d-file-bundle-format-details">OTIOZ/D File Bundle Format Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-filebundles.html#adapter-usage">Adapter Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-filebundles.html#read-adapter-behavior">Read Adapter Behavior</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-filebundles.html#write-adapter">Write Adapter</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-an-adapter.html">Writing an OTIO Adapter</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-an-adapter.html#sharing-an-adapter-youve-written-with-the-community">Sharing an Adapter You’ve Written With the Community</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-an-adapter.html#required-functions">Required Functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-an-adapter.html#constructing-a-timeline">Constructing a Timeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-an-adapter.html#traversing-a-timeline">Traversing a Timeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-an-adapter.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-a-media-linker.html">Writing an OTIO Media Linker</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-media-linker.html#registering-your-media-linker">Registering Your Media Linker</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-media-linker.html#writing-a-media-linker">Writing a Media Linker</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-media-linker.html#for-testing">For Testing</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-a-hookscript.html">Writing a Hook Script</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-hookscript.html#registering-your-hook-script">Registering Your Hook Script</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-hookscript.html#running-a-hook-script">Running a Hook Script</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-hookscript.html#order-of-hook-scripts">Order of Hook Scripts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-hookscript.html#example-hooks">Example Hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-hookscript.html#implementing-adapter-specific-hooks">Implementing Adapter-specific hooks</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/write-a-schemadef.html">Writing an OTIO SchemaDef Plugin</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-schemadef.html#registering-your-schemadef-plugin">Registering Your SchemaDef Plugin</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/write-a-schemadef.html#using-the-new-schema-in-your-code">Using the New Schema in Your Code</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/spatial-coordinates.html">OTIO Spatial Coordinate System</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/spatial-coordinates.html#coordinate-system">Coordinate System</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/spatial-coordinates.html#bounds">Bounds</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/spatial-coordinates.html#bounds-and-clips">Bounds and Clips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/spatial-coordinates.html#non-bounds-representations">Non-Bounds representations</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/developing-a-new-schema.html">Schema Proposal and Development Workflow</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#introduction">Introduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#examples">Examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#core-schema-or-plugin">Core schema or Plugin?</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#proposal">Proposal</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#implementing-and-iterating-on-a-branch">Implementing and Iterating on a branch</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#demo-adapter">Demo Adapter</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#incrementing-other-schemas">Incrementing Other Schemas</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/developing-a-new-schema.html#conclusion">Conclusion</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/versioning-schemas.html">Versioning Schemas</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/versioning-schemas.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/versioning-schemas.html#schema-version-introduction">Schema/Version Introduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/versioning-schemas.html#schema-upgrading">Schema Upgrading</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/versioning-schemas.html#schema-downgrading">Schema Downgrading</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/versioning-schemas.html#downgrading-at-runtime">Downgrading at Runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/versioning-schemas.html#for-developers">For Developers</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="use-cases">
+<h2>Use Cases<a class="headerlink" href="#use-cases" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Use Cases</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="use-cases/animation-shot-frame-ranges.html">Animation Shot Frame Ranges Changed</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/animation-shot-frame-ranges.html#summary">Summary</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/animation-shot-frame-ranges.html#example">Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/animation-shot-frame-ranges.html#features-needed-in-otio">Features Needed in OTIO</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/animation-shot-frame-ranges.html#features-of-python-script">Features of Python Script</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="use-cases/conform-new-renders-into-cut.html">Conform New Renders Into The Cut</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/conform-new-renders-into-cut.html#summary">Summary</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/conform-new-renders-into-cut.html#workflow">Workflow</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="use-cases/shots-added-removed-from-cut.html">Shots Added or Removed From The Cut</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/shots-added-removed-from-cut.html#summary">Summary</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/shots-added-removed-from-cut.html#example">Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/shots-added-removed-from-cut.html#features-needed-in-otio">Features Needed in OTIO</a></li>
+<li class="toctree-l2"><a class="reference internal" href="use-cases/shots-added-removed-from-cut.html#features-of-python-script">Features of Python Script</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="api-references">
+<h2>API References<a class="headerlink" href="#api-references" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">API References</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="python_reference.html">Python</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="api/python/opentimelineio.html">opentimelineio</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.adapters.html">opentimelineio.adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.algorithms.html">opentimelineio.algorithms</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.console.html">opentimelineio.console</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.core.html">opentimelineio.core</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.exceptions.html">opentimelineio.exceptions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.hooks.html">opentimelineio.hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.media_linker.html">opentimelineio.media_linker</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.opentime.html">opentimelineio.opentime</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.plugins.html">opentimelineio.plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.schema.html">opentimelineio.schema</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.schemadef.html">opentimelineio.schemadef</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.test_utils.html">opentimelineio.test_utils</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.url_utils.html">opentimelineio.url_utils</a></li>
+<li class="toctree-l3"><a class="reference internal" href="api/python/opentimelineio.versioning.html">opentimelineio.versioning</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="cxx/bridges.html">Language Bridges</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="cxx/bridges.html#python">Python</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/bridges.html#swift">Swift</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/bridges.html#bridging-to-c-and-other-languages">Bridging to C (and other languages)</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="cxx/cxx.html">C++ Implementation Details</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#dependencies">Dependencies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#starting-examples">Starting Examples</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="cxx/cxx.html#defining-a-schema">Defining a Schema</a></li>
+<li class="toctree-l3"><a class="reference internal" href="cxx/cxx.html#reading-writing-properties">Reading/Writing Properties</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#using-schemas">Using Schemas</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#serializable-data">Serializable Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#c-properties">C++ Properties</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#object-graphs-and-serialization">Object Graphs and Serialization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#memory-management">Memory Management</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="cxx/cxx.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#error-handling">Error Handling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#thread-safety">Thread Safety</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#proposed-otio-c-header-files">Proposed OTIO C++ Header Files</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/cxx.html#extended-memory-management-discussion">Extended Memory Management Discussion</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="cxx/older.html">Writing OTIO in C, C++ or Python (June 2018)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="cxx/older.html#python-c-api">Python C-API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/older.html#boost-python">Boost-Python</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/older.html#pybind11">PyBind11</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cxx/older.html#conclusion">Conclusion</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="schema-reference">
+<h2>Schema Reference<a class="headerlink" href="#schema-reference" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Schema Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-file-format-specification.html">File Format Specification</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#version">Version</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#note">Note</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#naming">Naming</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#contents">Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#structure">Structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#nesting">Nesting</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#metadata">Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#example">Example:</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-file-format-specification.html#schema-specification">Schema Specification</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema.html">Serialized Data Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema.html#class-documentation">Class Documentation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-adapters">Module: opentimelineio.adapters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-core">Module: opentimelineio.core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-hooks">Module: opentimelineio.hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-media-linker">Module: opentimelineio.media_linker</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-opentime">Module: opentimelineio.opentime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-plugins">Module: opentimelineio.plugins</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema.html#module-opentimelineio-schema">Module: opentimelineio.schema</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html">Serialized Data (Fields Only)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#classes">Classes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-adapters">Module: opentimelineio.adapters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-core">Module: opentimelineio.core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-hooks">Module: opentimelineio.hooks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-media-linker">Module: opentimelineio.media_linker</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-opentime">Module: opentimelineio.opentime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-plugins">Module: opentimelineio.plugins</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-serialized-schema-only-fields.html#module-opentimelineio-schema">Module: opentimelineio.schema</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="autogenerated-plugin-reference">
+<h2>Autogenerated Plugin Reference<a class="headerlink" href="#autogenerated-plugin-reference" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Plugins Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-plugins.html">Plugin Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-plugins.html#manifests">Manifests</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorials/otio-plugins.html#core-plugins">Core Plugins</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-plugins.html#adapter-plugins">Adapter Plugins</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-plugins.html#media-linkers">Media Linkers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-plugins.html#schemadefs">SchemaDefs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-plugins.html#hookscripts">HookScripts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/otio-plugins.html#hooks">Hooks</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="indices-and-tables">
+<h2>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></p></li>
+<li><p><a class="reference internal" href="py-modindex.html"><span class="std std-ref">Module Index</span></a></p></li>
+<li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="tutorials/quickstart.html" class="btn btn-neutral float-right" title="Quickstart" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright Copyright Contributors to the OpenTimelineIO project.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

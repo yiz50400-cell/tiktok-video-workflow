@@ -1,0 +1,64 @@
+{
+  "market": "MX",
+  "product": "licuadora portátil",
+  "product_definition": "仅接受杯身与电机一体、可单手握持并直接作为饮用杯、USB充电且脱离独立底座无线工作的便携榨汁杯。",
+  "updated_at": "2026-10-19T07:12:21.750278+00:00",
+  "candidates": [
+    {
+      "url": "https://www.tiktok.com/@darlingv3011/video/7563721080284663054",
+      "account": "7325134024679719982",
+      "video_id": "7563721080284663054",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "Mini licuadora portátil recargable, excelente para batidos naturales ..."
+    },
+    {
+      "url": "https://www.tiktok.com/@juiceitportable/video/7510717647806287150",
+      "account": "7507869862846235678",
+      "video_id": "7510717647806287150",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "Orange juice 🍊 #freshjuice #smoothie #milkshake #portableblender #min..."
+    },
+    {
+      "url": "https://www.tiktok.com/@lilfindip/video/7508826856796196127",
+      "account": "6806154399867667462",
+      "video_id": "7508826856796196127",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "River floating hacks!🙌🏼🎉 @Ninja Kitchen portable blender coming in cl..."
+    },
+    {
+      "url": "https://www.tiktok.com/@mishagetsfit/video/7460485157296901383",
+      "account": "7224335200666551302",
+      "video_id": "7460485157296901383",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "This is Ninja blast, portable blender. You need to change it through ..."
+    },
+    {
+      "url": "https://www.tiktok.com/@millybunnie/video/7596374972617051423",
+      "account": "6948015882560766981",
+      "video_id": "7596374972617051423",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "Prasky Portable Blender, Personal Blender for Shakes and Smoothies wi..."
+    },
+    {
+      "url": "https://www.tiktok.com/@junewijuly/video/7505403551485676831",
+      "account": "7382114542324696106",
+      "video_id": "7505403551485676831",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "You can make this juice everywhere! So great healthy food! I absolute..."
+    },
+    {
+      "url": "https://www.tiktok.com/@njhb48958kkkkkkk/video/7632618260545998111",
+      "account": "7325693390317208618",
+      "video_id": "7632618260545998111",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "🥤 Your summer just got EASIER with this portable juicer cup!   USB re..."
+    },
+    {
+      "url": "https://www.tiktok.com/@njhb48958kkkkkkk/video/7652297891511307550",
+      "account": "7325693390317208618",
+      "video_id": "7652297891511307550",
+      "why": "seed from successful MX portable blender run 2026-10-19",
+      "product_match_evidence": "🥤 Simple, sleek, and oh-so-functional.   Portable Household Juicer Cu..."
+    }
+  ]
+}

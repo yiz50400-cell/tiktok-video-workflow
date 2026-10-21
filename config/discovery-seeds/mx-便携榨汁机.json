@@ -1,0 +1,29 @@
+{
+  "market": "MX",
+  "product": "便携榨汁机",
+  "product_definition": "杯身与电机一体、可单手握持、无线充电且搅拌后可直接作为随行饮用杯使用；任何需连接独立电机底座的机器或普通水杯均不符合。",
+  "updated_at": "2026-10-20T08:11:19.548372+00:00",
+  "candidates": [
+    {
+      "url": "https://www.tiktok.com/@lilfindip/video/7508826856796196127",
+      "account": "6806154399867667462",
+      "why": "seed from prior accepted collection",
+      "product_match_evidence": "River floating hacks!🙌🏼🎉 @Ninja Kitchen portable blender coming in cl...",
+      "video_id": "7508826856796196127"
+    },
+    {
+      "url": "https://www.tiktok.com/@mishagetsfit/video/7460485157296901383",
+      "account": "7224335200666551302",
+      "why": "seed from prior accepted collection",
+      "product_match_evidence": "This is Ninja blast, portable blender. You need to change it through ...",
+      "video_id": "7460485157296901383"
+    },
+    {
+      "url": "https://www.tiktok.com/@junewijuly/video/7505403551485676831",
+      "account": "7382114542324696106",
+      "why": "seed from prior accepted collection",
+      "product_match_evidence": "You can make this juice everywhere! So great healthy food! I absolute...",
+      "video_id": "7505403551485676831"
+    }
+  ]
+}

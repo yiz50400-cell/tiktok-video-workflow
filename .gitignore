@@ -1,0 +1,60 @@
+# Python / 本机环境
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+
+# 运行状态、凭据与证据（含 .runtime/access.token）
+.runtime/
+*.token
+
+# 客户/开发素材与项目数据（含第三方视频、账号检查记录）
+projects/
+
+# 旧桌面安装包、构建产物与前端依赖
+distribution/
+desktop-dist/
+dist/
+node_modules/
+desktop-tests/
+
+# 归档的历史代码与文档（本机保留，不进入交付仓库）
+_archive/
+
+# 大文件与媒体
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.webm
+*.wav
+*.zip
+*.exe
+*.blockmap
+*.pt
+*.sqlite3
+*.db
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 本机 IDE / 工具缓存
+.idea/
+.vscode/
+*.swp
+.mypy_cache/
+.ruff_cache/
+
+# 本机运行产物与日志
+logs/
+*.log
+.coverage
+htmlcov/
+
+# 勿提交本机 Codex 凭据副本
+auth.json
+**/auth.json
+.codex/

@@ -1,0 +1,10 @@
+# Windows 源码部署样例；把 <项目目录> 替换为本机项目绝对路径（使用正斜杠，例如 D:/视频 工作流）。
+# 中转及 Key 使用员工个人 Codex 配置，不写入此文件。MCP 使用前运行 <项目目录>\scripts\start.bat。
+[mcp_servers.team_video_workflow]
+command = "<项目目录>/.venv/Scripts/python.exe"
+args = ["-X", "utf8", "<项目目录>/scripts/mcp.py"]
+
+[mcp_servers.team_video_workflow.env]
+WORKFLOW_API_URL = "http://127.0.0.1:8765"
+WORKFLOW_DATA_DIR = "<项目目录>/.runtime"
+PYTHONUTF8 = "1"

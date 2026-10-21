@@ -1,0 +1,27 @@
+[
+  {
+    "name": "skill-readme",
+    "url": "https://raw.githubusercontent.com/mcncarl/yichen-skills/main/yichen-jianying-edit/README.md",
+    "sha256": "a9f32763bd9d5e82c21476d90d4d0b90c3acb519d9e83a66a1a9995e9edb997f"
+  },
+  {
+    "name": "skill-export",
+    "url": "https://raw.githubusercontent.com/mcncarl/yichen-skills/main/yichen-jianying-edit/references/export-macos.md",
+    "sha256": "1ca26deda907c09e2605dea11ecff1bebf3e8aa047bea9a1f0480bd6106b20c2"
+  },
+  {
+    "name": "core-readme",
+    "url": "https://raw.githubusercontent.com/mcncarl/jianying-headless/main/README.md",
+    "sha256": "831b8c5ac823ecfb55e263b572bc77be2c8acc1136cf85ad3ed1b8f022f2bc10"
+  },
+  {
+    "name": "core-license",
+    "url": "https://raw.githubusercontent.com/mcncarl/jianying-headless/main/LICENSE",
+    "sha256": "107d928e6cc3848b651c4e026d247693c03f7bed5372ce48788baa72f1cf54f8"
+  },
+  {
+    "name": "core-cli",
+    "url": "https://raw.githubusercontent.com/mcncarl/yichen-skills/main/yichen-jianying-edit/scripts/headless_draft.py",
+    "sha256": "9898e0d918a8efffea32636e6a074a2fda06794f70f71a83ef28ea9432eb064c"
+  }
+]

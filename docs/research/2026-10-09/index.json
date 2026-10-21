@@ -1,0 +1,143 @@
+[
+  {
+    "name": "shortgpt",
+    "url": "https://raw.githubusercontent.com/RayVentura/ShortGPT/stable/README.md",
+    "path": "<项目目录>/docs/research/2026-10-09/shortgpt.txt",
+    "snippets": [
+      " footage from the internet, connecting with the web and Pexels API as necessary.\n\n- 🧠 **Memory and persistency**: Ensures long-term persistency of automated editing variables with TinyDB.\n\n## 🚀 Quick Start: Run ShortGPT on Google Colab (https://colab.research.google.com/drive/1_2UKdpF6lqxCqWaAcZb3rwMVQqtbisdE?usp=sharing)\n\nIf you prefer not to install the prerequisites on your local system, you can use the Google Colab notebook. This option is free and requires no installation setup.\n\n1. Click on the link to the Google Colab notebook: [https://colab.research.google.com/drive/1_2UKdpF6lqxCqWaAcZb3rwMVQqtbisdE?usp=sharing](https://colab.research.google.com/drive/1_2UKdpF6lqxCqWaAcZb3rwMVQqtbisdE?usp=sharing)\n\n2. Once you're in the notebook, simply run the cells in order from top to bottom. You can do this by clicking on each cell and pressing the 'Play' button, or by using the keyboard . Enjoy using ShortGPT!\n\n# Instructions for running shortGPT locally\nThis guide provides step-by-step instructions for installing shortGPT and its dependencies.\nTo run ShortGPT locally, you need Docker.\n\n## Installation Steps\n\nTo run ShortGPT, you need to have docker. Follow the ins",
+      "k, transcribe it's audio, translates the content, voices it in a target language, adds captions , and gives back a new video, in a totally different language.\n\n- 🎞️ The automated `EditingEngine`, using Editing Markup Language and JSON, breaks down the editing process into manageable and customizable blocks, comprehensible to Large Language Models.\n\n💡 ShortGPT offers customization options to suit your needs, from language selection to watermark addition.\n\n🔧 As a framework, ShortGPT is adaptable and flexible, offering the potential for efficient, creative content creation.\n\nMore documentation incomming, please be patient.\n\n\n## Technologies Used\n\nShortGPT utilizes the following technologies to power its functionality:\n\n- **Moviepy**: Moviepy is used for video editing, allowing ShortGPT to make video editing and rendering\n\n- **Openai**: Openai is used for automating the entire process, including generating scripts and prompts for LLM automated editing processes.\n\n- **ElevenLabs**: ElevenLabs is used for voice synthesis, supporting multiple languages for voiceover creation.\n\n- **EdgeTTS**: Microsoft's FREE EdgeTTS is used for voice synthesis, supporting way many more",
+      " creative content creation.\n\nMore documentation incomming, please be patient.\n\n\n## Technologies Used\n\nShortGPT utilizes the following technologies to power its functionality:\n\n- **Moviepy**: Moviepy is used for video editing, allowing ShortGPT to make video editing and rendering\n\n- **Openai**: Openai is used for automating the entire process, including generating scripts and prompts for LLM automated editing processes.\n\n- **ElevenLabs**: ElevenLabs is used for voice synthesis, supporting multiple languages for voiceover creation.\n\n- **EdgeTTS**: Microsoft's FREE EdgeTTS is used for voice synthesis, supporting way many more language than ElevenLabs currently.\n\n- **Pexels**: Pexels is used for sourcing background footage, allowing ShortGPT to connect with the web and access a wide range of images and videos.\n\n- **Bing Image**: Bing Image is used for sourcing images, providing a comprehensive database for ShortGPT to retrieve relevant visuals.\n\nThese technologies work together to provide a seamless and efficient experience in automating video and short content creation with AI.\n\n## 💁 Contributing\n\nAs an open-source project in a rapidly developing field, we are extr"
+    ]
+  },
+  {
+    "name": "langgraph-durable",
+    "url": "https://docs.langchain.com/oss/python/langgraph/durable-execution",
+    "path": "<项目目录>/docs/research/2026-10-09/langgraph-durable.html",
+    "status": "retrieved using curl after urllib redirect error"
+  },
+  {
+    "name": "langgraph-interrupts",
+    "url": "https://docs.langchain.com/oss/python/langgraph/interrupts",
+    "path": "<项目目录>/docs/research/2026-10-09/langgraph-interrupts.txt",
+    "snippets": [
+      "must use the same thread ID when resuming that was used when the interrupt occurred The value passed to Command(resume=...) becomes the return value of the interrupt call The node restarts from the beginning of the node where the interrupt was called when resumed, so any code before the interrupt runs again You can pass any JSON-serializable value as the resume value, subject to validation when you specify a typed response_schema Command(resume=...) is the only Command pattern intended as input to invoke() / stream() / stream_events() . The other Command parameters ( update , goto , graph ) are designed for returning from node functions . Do not pass Command(update=...) as input to continue multi-turn conversations—pass a plain input dict instead. ​ Define an interrupt response schema The response_schema argument to interrupt describes the input expected when you resume the graph. Clients can use the schema to render typed input forms. Interrupt response schemas require langgraph&gt;=1.2.12 . Pass a Pydantic model class, a TypedDict from typing_extensions , or a dataclass to validate resume values. LangGraph converts the type to JSON Schema and includes it in In",
+      "be conditional based on your application logic. Checkpointing keeps your place: the checkpointer writes the exact graph state so you can resume later, even when in an error state. thread_id is your pointer: set config={&quot;configurable&quot;: {&quot;thread_id&quot;: ...}} to tell the checkpointer which state to load. Interrupt payloads surface via stream.interrupts : when using event streaming ( graph.stream_events(..., version=&quot;v3&quot;) ), the values you pass to interrupt() appear on stream.interrupts , and stream.interrupted is True when the run pauses for input. The thread_id you choose is effectively your persistent cursor. Reusing it resumes the same checkpoint; using a new value starts a brand-new thread with an empty state. ​ Pause using interrupt The interrupt function pauses graph execution and returns a value to the caller. When you call interrupt within a node, LangGraph saves the current graph state and waits for you to resume execution with input. To use interrupt , you need: A checkpointer to persist the graph state (use a durable checkpointer in production) A thread ID in your config so the runtime knows which state to resume from To call ",
+      "persistence layer and waits indefinitely until you resume execution. Interrupts work by calling the interrupt() function at any point in your graph nodes. The function accepts any JSON-serializable value which is surfaced to the caller. When you’re ready to continue, you resume execution by re-invoking the graph using Command , which then becomes the return value of the interrupt() call from inside the node. Unlike static breakpoints (which pause before or after specific nodes), interrupts are dynamic : they can be placed anywhere in your code and can be conditional based on your application logic. Checkpointing keeps your place: the checkpointer writes the exact graph state so you can resume later, even when in an error state. thread_id is your pointer: set config={&quot;configurable&quot;: {&quot;thread_id&quot;: ...}} to tell the checkpointer which state to load. Interrupt payloads surface via stream.interrupts : when using event streaming ( graph.stream_events(..., version=&quot;v3&quot;) ), the values you pass to interrupt() appear on stream.interrupts , and stream.interrupted is True when the run pauses for input. The thread_id you choose is effectively yo"
+    ]
+  },
+  {
+    "name": "n8n-queue",
+    "url": "https://docs.n8n.io/hosting/scaling/queue-mode/",
+    "path": "<项目目录>/docs/research/2026-10-09/n8n-queue.html",
+    "status": "retrieved using curl after urllib redirect error"
+  },
+  {
+    "name": "remotion-pricing",
+    "url": "https://www.remotion.dev/license",
+    "path": "<项目目录>/docs/research/2026-10-09/remotion-pricing.txt",
+    "snippets": [
+      "License Company License Free License Copyright © 2026 Remotion Eligibility You are eligible to use Remotion for free if you are: an individual a for-profit organization with up to 3 employees a non-profit or not-for-profit organization evaluating whether Remotion is a good fit, and are not yet using it in a commercial way Allowed use cases Permission is hereby granted, free of charge, to any person eligible for the \"Free License\", to use the software non-commercially or commercially for the purpose of creating videos and images and to modify the software to their own liking, for the purpose of fulfilling their custom use case or to contribute bug fixes or improvements back to Remotion. Disallowed use cases It is not allowed to copy or modify Remotion code for the purpose of selling, renting, licensing, relicensing, or sublicensing your own derivate of Remotion. Warranty notice The software is provided \"as is\", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the author or copyright holders be liable for any claim, damages or ",
+      "de security Secure your code as you build Secret protection Stop leaks before they start EXPLORE Why GitHub Documentation Blog Changelog Marketplace View all features Solutions BY COMPANY SIZE Enterprises Small and medium teams Startups Nonprofits BY USE CASE App Modernization DevSecOps DevOps CI/CD View all use cases BY INDUSTRY Healthcare Financial services Manufacturing Government View all industries View all solutions Resources EXPLORE BY TOPIC AI Software Development DevOps Security View all topics EXPLORE BY TYPE Customer stories Events &amp; webinars Ebooks &amp; reports Business insights GitHub Skills SUPPORT &amp; SERVICES Documentation Customer support Community forum Trust center Partners View all resources Open Source COMMUNITY GitHub Sponsors Fund open source developers PROGRAMS Security Lab Maintainer Community GitHub Stars Archive Program REPOSITORIES Topics Trending Collections Enterprise ENTERPRISE SOLUTIONS Enterprise platform AI-powered developer platform AVAILABLE ADD-ONS GitHub Advanced Security Enterprise-grade security features Copilot for Business Enterprise-grade AI features Premium Support Enterprise-grade 24/7 support Pricing Search / ",
+      " remotion/LICENSE.md at main · remotion-dev/remotion · GitHub Skip to content Navigation Menu Sign in Appearance settings Platform AI CODE CREATION GitHub Copilot Write better code with AI GitHub Copilot app Direct agents from issue to merge MCP Registry Integrate external tools DEVELOPER WORKFLOWS Actions Automate any workflow Codespaces Instant dev environments Issues Plan and track work Code Review Manage code changes Code Quality Enforce quality at merge APPLICATION SECURITY GitHub Advanced Security Find and fix vulnerabilities Code security Secure your code as you build Secret protection Stop leaks before they start EXPLORE Why GitHub Documentation Blog Changelog Marketplace View all features Solutions BY COMPANY SIZE Enterprises Small and medium teams Startups Nonprofits BY USE CASE App Modernization DevSecOps DevOps CI/CD View all use cases BY INDUSTRY Healthcare Financial services Manufacturing Government View all industries View all solutions Resources EXPLORE BY TOPIC AI Software Devel"
+    ]
+  },
+  {
+    "name": "celery-tasks",
+    "url": "https://docs.celeryq.dev/en/stable/userguide/tasks.html",
+    "path": "<项目目录>/docs/research/2026-10-09/celery-tasks.txt",
+    "snippets": [
+      " messages in advance and even if the worker is killed – by power failure or some other reason – the message will be redelivered to another worker. Ideally task functions should be idempotent : meaning the function won’t cause unintended effects even if called multiple times with the same arguments. Since the worker cannot detect if your tasks are idempotent, the default behavior is to acknowledge the message in advance, just before it’s executed, so that a task invocation that already started is never executed again. If your task is idempotent you can set the acks_late option to have the worker acknowledge the message after the task returns instead. See also the FAQ entry Should I use retry or acks_late? . Note that the worker will acknowledge the message if the child process executing the task is terminated (either by the task calling sys.exit() , or by signal) even when acks_late is enabled. This behavior is intentional as… We don’t want to rerun tasks that forces the kernel to send a SIGSEGV (segmentation fault) or similar signals to the process. We assume that a system administrator deliberately killing the task does not want it to automatically restart. A t",
+      "o acknowledge the message in advance, just before it’s executed, so that a task invocation that already started is never executed again. If your task is idempotent you can set the acks_late option to have the worker acknowledge the message after the task returns instead. See also the FAQ entry Should I use retry or acks_late? . Note that the worker will acknowledge the message if the child process executing the task is terminated (either by the task calling sys.exit() , or by signal) even when acks_late is enabled. This behavior is intentional as… We don’t want to rerun tasks that forces the kernel to send a SIGSEGV (segmentation fault) or similar signals to the process. We assume that a system administrator deliberately killing the task does not want it to automatically restart. A task that allocates too much memory is in danger of triggering the kernel OOM killer, the same may happen again. A task that always fails when redelivered may cause a high-frequency message loop taking down the system. If you really want a task to be redelivered in these scenarios you should consider enabling the task_reject_on_worker_lost setting. Warning A task that blocks indefinit",
+      "d again. If your task is idempotent you can set the acks_late option to have the worker acknowledge the message after the task returns instead. See also the FAQ entry Should I use retry or acks_late? . Note that the worker will acknowledge the message if the child process executing the task is terminated (either by the task calling sys.exit() , or by signal) even when acks_late is enabled. This behavior is intentional as… We don’t want to rerun tasks that forces the kernel to send a SIGSEGV (segmentation fault) or similar signals to the process. We assume that a system administrator deliberately killing the task does not want it to automatically restart. A task that allocates too much memory is in danger of triggering the kernel OOM killer, the same may happen again. A task that always fails when redelivered may cause a high-frequency message loop taking down the system. If you really want a task to be redelivered in these scenarios you should consider enabling the task_reject_on_worker_lost setting. Warning A task that blocks indefinitely may eventually stop the worker instance from doing any other work. If your task does I/O then make sure you add timeouts to "
+    ]
+  },
+  {
+    "name": "ffmpeg-filters",
+    "url": "https://ffmpeg.org/ffmpeg-filters.html",
+    "path": "<项目目录>/docs/research/2026-10-09/ffmpeg-filters.txt",
+    "snippets": [
+      "t 11.96.1 Examples 11.97 floodfill 11.98 format 11.98.1 Examples 11.99 fps 11.99.1 Examples 11.100 framepack 11.101 framerate 11.102 frc_amf 11.103 vqe_amf 11.104 framestep 11.105 freezedetect 11.106 freezeframes 11.107 frei0r 11.107.1 Examples 11.107.2 Commands 11.108 fspp 11.109 fsync 11.110 gainmap 11.110.1 Examples 11.111 gblur 11.111.1 Commands 11.112 geq 11.112.1 Examples 11.113 gradfun 11.113.1 Examples 11.114 graphmonitor 11.115 grayworld 11.116 greyedge 11.116.1 Examples 11.117 guided 11.117.1 Commands 11.117.2 Examples 11.118 haldclut 11.118.1 Commands 11.118.2 Workflow examples 11.118.2.1 Hald CLUT video stream 11.118.2.2 Hald CLUT with preview 11.119 hflip 11.120 histeq 11.121 histogram 11.121.1 Examples 11.122 hqdn3d 11.122.1 Commands 11.123 hwdownload 11.124 hwmap 11.125 hwupload 11.126 hwupload_cuda 11.127 hqx 11.128 hstack 11.129 hsvhold 11.130 hsvkey 11.131 hue 11.131.1 Examples 11.131.2 Commands 11.132 huesaturation 11.133 hysteresis 11.134 iccdetect 11.135 iccgen 11.136 identity 11.137 idet 11.137.1 Examples 11.138 il 11.138.1 Commands 11.139 inflate 11.139.1 Commands 11.140 interlace, interlace_vulkan 11.141 kerndeint 11.141.1 Examples 11.142",
+      "1.6 atadenoise 11.6.1 Commands 11.7 avgblur 11.7.1 Commands 11.8 backgroundkey 11.8.1 Commands 11.9 bbox 11.9.1 Commands 11.10 bilateral 11.10.1 Commands 11.11 bitplanenoise 11.12 blackdetect, blackdetect_vulkan 11.13 blackframe 11.14 blend 11.14.1 Examples 11.14.2 Commands 11.15 blockdetect 11.15.1 Examples 11.16 blurdetect 11.16.1 Examples 11.17 bm3d 11.17.1 Examples 11.18 boxblur 11.18.1 Examples 11.19 bwdif 11.20 ccrepack 11.21 cas 11.21.1 Commands 11.22 chromahold 11.22.1 Commands 11.23 chromakey 11.23.1 Commands 11.23.2 Examples 11.24 chromanr 11.24.1 Commands 11.25 chromashift 11.25.1 Commands 11.26 ciescope 11.27 codecview 11.27.1 Examples 11.28 colorbalance 11.28.1 Examples 11.28.2 Commands 11.29 colorcontrast 11.29.1 Commands 11.30 colorcorrect 11.30.1 Commands 11.31 colorchannelmixer 11.31.1 Examples 11.31.2 Commands 11.32 colordetect 11.33 colorize 11.33.1 Commands 11.34 colorkey 11.34.1 Examples 11.34.2 Commands 11.35 colorhold 11.35.1 Commands 11.36 colorlevels 11.36.1 Examples 11.36.2 Commands 11.37 colormap 11.38 colormatrix 11.39 colorspace 11.40 colortemperature 11.40.1 Commands 11.41 convolution 11.41.1 Commands 11.41.2 Examples 11.42 convolve",
+      "ing examples 8.102 replaygain 8.103 resample 8.104 rubberband 8.104.1 Commands 8.105 sidechaincompress 8.105.1 Commands 8.105.2 Examples 8.106 sidechaingate 8.106.1 Commands 8.107 silencedetect 8.107.1 Examples 8.108 silenceremove 8.108.1 Examples 8.108.2 Commands 8.109 sofalizer 8.109.1 Examples 8.110 speechnorm 8.110.1 Commands 8.110.2 Examples 8.111 stereotools 8.111.1 Commands 8.111.2 Examples 8.112 stereowiden 8.112.1 Commands 8.113 superequalizer 8.114 surround 8.115 tiltshelf 8.115.1 Commands 8.116 treble, highshelf 8.116.1 Commands 8.117 tremolo 8.118 vibrato 8.119 virtualbass 8.120 volume 8.120.1 Commands 8.120.2 Examples 8.121 volumedetect 8.121.1 Examples 8.122 whisper 8.122.1 Examples 9 Audio Sources 9.1 abuffer 9.1.1 Examples 9.2 aevalsrc 9.2.1 Examples 9.3 afdelaysrc 9.4 afireqsrc 9.5 afirsrc 9.6 anullsrc 9.6.1 Examples 9.7 flite 9.7.1 Examples 9.8 anoisesrc 9.8.1 Examples 9.9 hilbert 9.10 sinc 9.11 sine 9.11.1 Examples 10 Audio Sinks 10.1 abuffersink 10.2 anullsink 11 Video Filters 11.1 addroi 11.1.1 Examples 11.2 alphaextract 11.3 alphamerge 11.4 amplify 11.4.1 Commands 11.5 ass 11.5.1 Commands 11.6 atadenoise 11.6.1 Commands 11.7 avgblur 11.7.1 "
+    ]
+  },
+  {
+    "name": "pyscenedetect",
+    "url": "https://www.scenedetect.com/docs/latest/",
+    "path": "<项目目录>/docs/research/2026-10-09/pyscenedetect.txt",
+    "snippets": [
+      " PySceneDetect Documentation &#8212; PySceneDetect 0.7.1 documentation PySceneDetect Documentation ¶ Welcome to the PySceneDetect docs. The docs are split into two separate parts: one for the command-line interface (the scenedetect command) and another for the Python API (the scenedetect module). You can install the latest release of PySceneDetect by running pip install scenedetect (or pip install scenedetect-headless on servers without GUI libraries), or by downloading the Windows build from scenedetect.com/download . PySceneDetect requires ffmpeg or mkvmerge for video splitting support. Note If you see any errors in the documentation, or want to suggest improvements, feel free to raise an issue on the PySceneDetect issue tracker . PySceneDetect development happens on Github at github.com/Breakthrough/PySceneDetect . Table of Contents ¶ scenedetect Command Reference 🖥️ ¶ Command-Line Interface: scenedetect 🎬 Command Examples Options help , version , and about Detectors detect-adaptive de",
+      " PySceneDetect Documentation &#8212; PySceneDetect 0.7.1 documentation PySceneDetect Documentation ¶ Welcome to the PySceneDetect docs. The docs are split into two separate parts: one for the command-line interface (the scenedetect command) and another for the Python API (the scenedetect module). You can install the latest release of PySceneDetect by running pip install scenedetect (or pip install scenedetect-headless on servers without GUI libraries), or by downloading the Windows build from scenedetect.com/download . PySceneDetect requires ffmpeg or mkvmerge for video splitting support. Note If you see any errors in the documentation, or want to suggest improvements, feel free to raise an issue on the PySceneDetect issue tracker . PySceneDetect development happens on Github at github.com/Breakthrough/PySceneDetect . Table of Contents ¶ scenedetect Command Reference 🖥️ ¶ Command-Line Interface: scenedetect 🎬 Command Examples Options help , version , and about Detectors detect-adaptive detect-"
+    ]
+  },
+  {
+    "name": "moneyprinter-readme",
+    "url": "https://raw.githubusercontent.com/harry0703/MoneyPrinterTurbo/main/README.md",
+    "path": "<项目目录>/docs/research/2026-10-09/moneyprinter-readme.md",
+    "status": "retrieved"
+  },
+  {
+    "name": "moneyprinter-task",
+    "url": "https://raw.githubusercontent.com/harry0703/MoneyPrinterTurbo/main/app/services/task.py",
+    "path": "<项目目录>/docs/research/2026-10-09/moneyprinter-task.py.txt",
+    "status": "retrieved"
+  },
+  {
+    "name": "pyjianying-readme",
+    "url": "https://raw.githubusercontent.com/GuanYixuan/pyJianYingDraft/main/README.md",
+    "path": "<项目目录>/docs/research/2026-10-09/pyjianying-readme.md",
+    "status": "retrieved"
+  },
+  {
+    "name": "temporal-workflows",
+    "url": "https://docs.temporal.io/workflows",
+    "path": "<项目目录>/docs/research/2026-10-09/temporal-workflows.txt",
+    "status": "retrieved"
+  },
+  {
+    "name": "remotion-renderer",
+    "url": "https://www.remotion.dev/docs/renderer",
+    "path": "<项目目录>/docs/research/2026-10-09/remotion-renderer.txt",
+    "status": "retrieved"
+  },
+  {
+    "name": "otio-overview",
+    "url": "https://opentimelineio.readthedocs.io/en/latest/",
+    "path": "<项目目录>/docs/research/2026-10-09/otio-overview.txt",
+    "status": "retrieved"
+  },
+  {
+    "name": "auto-editor-readme",
+    "url": "https://raw.githubusercontent.com/WyattBlue/auto-editor/master/README.md",
+    "path": "<项目目录>/docs/research/2026-10-09/auto-editor-readme.txt",
+    "status": "retrieved"
+  },
+  {
+    "name": "chatgpt-work",
+    "url": "https://learn.chatgpt.com/codex/get-started-with-work",
+    "path": "<项目目录>/docs/research/2026-10-09/chatgpt-work-openai.html",
+    "status": "retrieved",
+    "retrieved_date": "2026-10-09"
+  },
+  {
+    "name": "plugins",
+    "url": "https://learn.chatgpt.com/plugins/concepts/plugins",
+    "path": "<项目目录>/docs/research/2026-10-09/plugins-openai.html",
+    "status": "retrieved",
+    "retrieved_date": "2026-10-09"
+  },
+  {
+    "name": "skills",
+    "url": "https://learn.chatgpt.com/plugins/concepts/skills",
+    "path": "<项目目录>/docs/research/2026-10-09/skills-openai.html",
+    "status": "retrieved",
+    "retrieved_date": "2026-10-09"
+  },
+  {
+    "name": "video-generation",
+    "url": "https://developers.openai.com/api/docs/guides/video-generation",
+    "path": "<项目目录>/docs/research/2026-10-09/video-generation-openai.html",
+    "status": "retrieved",
+    "retrieved_date": "2026-10-09"
+  }
+]

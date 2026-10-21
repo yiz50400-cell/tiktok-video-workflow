@@ -1,0 +1,62 @@
+# Windows 无人值守 ChatCut profile 样例。
+# 复制到 %USERPROFILE%\.codex\unattended-chatcut.config.toml（或 %CODEX_HOME%\unattended-chatcut.config.toml）
+# 安装后必须把 command 改成该机真实的 chatcut-mcp 绝对路径，并填入自己的 model_provider / bearer（不要提交密钥）。
+#
+# 关键：
+# 1) CHATCUT_MCP_CLIENT 必须是 ChatCut 白名单值，推荐 "codex_app"。
+# 2) gpt-5.6-sol 默认 defer MCP；必须 features.code_mode_host = true。
+# 3) computer_use = false，禁止回退到界面/应用内 AI。
+# 4) Windows 上 ChatCut 自动重启尚未实现：制作前请保持 ChatCut Desktop 已打开并登录。
+#
+# 查找 chatcut-mcp（装完 ChatCut Desktop 并至少打开一次后）：
+#   dir "%LOCALAPPDATA%\ChatCut\chatcut-mcp*"
+#   dir "%LOCALAPPDATA%\Programs\ChatCut\chatcut-mcp*"
+#   dir "%APPDATA%\ChatCut\chatcut-mcp*"
+# 也可用环境变量 CHATCUT_MCP 指向绝对路径，门禁与健康探针会优先用它。
+
+# 注意：实际生效的模型以 codex exec -m 为准，流水线按 --codex-model > 环境变量 VW_CODEX_MODEL > 默认 gpt-5.6-sol 决定并传入 -m；这里的 model 只是兜底。
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+model_instructions_file = "%USERPROFILE%/.codex/prompts/unattended-chatcut-instructions.md"
+
+[features]
+code_mode_host = true
+computer_use = false
+browser_use = false
+browser_use_external = false
+apps = false
+
+[mcp_servers.chatcut_desktop]
+# 把下一行换成该机真实路径（正斜杠或转义反斜杠均可），例如：
+# command = "C:/Users/<你>/AppData/Local/ChatCut/chatcut-mcp.exe"
+command = "%LOCALAPPDATA%/ChatCut/chatcut-mcp.exe"
+startup_timeout_sec = 120
+enabled_tools = [
+  "list_projects",
+  "get_active_project",
+  "create_project",
+  "target_project",
+  "duplicate_project",
+  "edit_project",
+  "read_project",
+  "browse_assets",
+  "inspect_asset",
+  "inspect_item",
+  "push_asset",
+  "pull_asset",
+  "manage_timelines",
+  "edit_track",
+  "edit_item",
+  "split_item",
+  "detach_audio",
+  "edit_captions",
+  "read_captions",
+  "preview_timeline",
+  "export",
+  "track_progress",
+  "search_fonts",
+  "manage_markers",
+]
+
+[mcp_servers.chatcut_desktop.env]
+CHATCUT_MCP_CLIENT = "codex_app"

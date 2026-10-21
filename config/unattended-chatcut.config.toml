@@ -1,0 +1,55 @@
+# 瘦身 profile：仅 ChatCut MCP 编辑工具。安装时复制到 $CODEX_HOME/unattended-chatcut.config.toml
+# Windows 客户请用 config/unattended-chatcut.windows.example.toml（不要照抄本文件的 macOS Library 路径）。
+# 并填入本机 model_provider / bearer（不要提交密钥）。
+# 推荐：codex exec -p unattended-chatcut （叠在用户 config 上，不要 --ignore-user-config）
+#
+# 关键（2026-10-19）：
+# 1) CHATCUT_MCP_CLIENT 必须是 ChatCut 允许的值（如 codex_app）。
+#    "codex_unattended" / "codex_cli" 会导致 chatcut-mcp 直接 fatal 退出，Codex 看不到任何工具。
+# 2) gpt-5.6-sol 默认 defer MCP；tool_search 已移除。必须开启 code_mode_host，
+#    工具才会进入 code_mode ALL_TOOLS（见 openai/codex#33609）。
+
+# 注意：实际生效的模型以 codex exec -m 为准，流水线按 --codex-model > 环境变量 VW_CODEX_MODEL > 默认 gpt-5.6-sol 决定并传入 -m；这里的 model 只是兜底。
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+model_instructions_file = "$HOME/.codex/prompts/unattended-chatcut-instructions.md"
+
+[features]
+code_mode_host = true
+computer_use = false
+browser_use = false
+browser_use_external = false
+apps = false
+
+[mcp_servers.chatcut_desktop]
+command = "$HOME/Library/Application Support/ChatCut/chatcut-mcp"
+startup_timeout_sec = 120
+enabled_tools = [
+  "list_projects",
+  "get_active_project",
+  "create_project",
+  "target_project",
+  "duplicate_project",
+  "edit_project",
+  "read_project",
+  "browse_assets",
+  "inspect_asset",
+  "inspect_item",
+  "push_asset",
+  "pull_asset",
+  "manage_timelines",
+  "edit_track",
+  "edit_item",
+  "split_item",
+  "detach_audio",
+  "edit_captions",
+  "read_captions",
+  "preview_timeline",
+  "export",
+  "track_progress",
+  "search_fonts",
+  "manage_markers",
+]
+
+[mcp_servers.chatcut_desktop.env]
+CHATCUT_MCP_CLIENT = "codex_app"

@@ -1,0 +1,5 @@
+# 可选：按链接解析/下载参考视频时使用（workflow/collection/collector.py 调用 yt-dlp）。
+# 版本与历史 Windows 下载器锁定一致。
+yt-dlp==2026.8.19
+# yt-dlp 访问 TikTok 时用来模拟浏览器（impersonation），缺了会每次下载都报警告、个别视频下不动。
+curl_cffi==0.14.0

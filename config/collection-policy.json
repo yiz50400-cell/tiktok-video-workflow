@@ -1,0 +1,147 @@
+{
+  "version": "2026-10-09.2",
+  "purpose": "TikTok 爆款商品带货视频采集与结构研究",
+  "default_market": "MX",
+  "ad_style_required": true,
+  "source_priority": [
+    "tiktok_same_product_high_engagement_commerce_videos",
+    "tiktok_same_category_high_engagement_commerce_videos_for_structure",
+    "user_selected_competitor_or_creator_accounts",
+    "supplier_or_brand_product_originals",
+    "tiktok_creative_center_top_ads_supplement"
+  ],
+  "default_excluded": [
+    "generic_stock_footage",
+    "unrelated_lifestyle_video",
+    "product_image_slideshow",
+    "unrelated_product_demonstration",
+    "generic_entertainment_video"
+  ],
+  "candidate_requirements": [
+    "商品身份与匹配依据明确",
+    "有明显商品推广或购买引导意图",
+    "有可理解的钩子或具体使用场景",
+    "有商品操作、功能演示或结果证明镜头",
+    "优先竖屏 9:16，清晰且关键动作可见"
+  ],
+  "source_classification": [
+    "paid_ad_verified",
+    "commerce_video",
+    "ad_status_unverified"
+  ],
+  "use_classification": [
+    "same_sku_material_candidate",
+    "ad_structure_reference"
+  ],
+  "same_category_is_not_same_sku_proof": true,
+  "metrics_require_visible_source_evidence": true,
+  "download_requires_actual_retrieval_verification": true,
+  "preview_batch_size": 8,
+  "result_fields": [
+    "source_url",
+    "account",
+    "market",
+    "observed_at",
+    "product_match_evidence",
+    "source_classification",
+    "use_classification",
+    "hook",
+    "demo_or_proof",
+    "purchase_intent_evidence",
+    "visible_metrics",
+    "retrieval_status",
+    "popularity_evidence",
+    "watermark_status",
+    "acquisition_method",
+    "failure_reason",
+    "material_eligibility",
+    "structure_reference_eligibility"
+  ],
+  "implementation_status": "standalone_collection_cli_ready_automatic_search_pending",
+  "popularity_evidence": {
+    "fields": [
+      "views",
+      "likes",
+      "comments",
+      "saves",
+      "shares",
+      "posted_at",
+      "observed_at",
+      "account_recent_baseline",
+      "purchase_intent_comments"
+    ],
+    "missing_values": "null_with_reason",
+    "rank_by": [
+      "product_and_commerce_match",
+      "relative_performance_when_baseline_available",
+      "freshness",
+      "visible_engagement",
+      "demo_quality"
+    ],
+    "paid_status_is_not_required": true,
+    "engagement_is_not_sales_or_causal_proof": true,
+    "old_high_engagement_is_not_current_trending": true
+  },
+  "acquisition": {
+    "preferred": "publicly_available_clean_original",
+    "fallback_order": [
+      "native_platform_download",
+      "observed_public_player_media_or_manifest",
+      "brand_or_creator_same_video_original",
+      "viewable_video_screen_capture_with_quality_review"
+    ],
+    "on_access_gate": "use_available_authorized_session_or_mark_needs_input",
+    "on_failure": "save_reason_and_keep_reference_eligible_when_viewable",
+    "retry_policy": "bounded_retries_then_change_method",
+    "implemented_and_verified": [
+      "native_platform_download",
+      "local_import",
+      "compatible_preview",
+      "single_public_tiktok_player_version_retrieval_via_yt_dlp"
+    ],
+    "pending": [
+      "clean_original_adapter",
+      "manifest_acquisition_adapter",
+      "screen_capture_adapter",
+      "batch_collector"
+    ],
+    "verification_scope": "SHEGLAM样例单条成功；未集成无人值守批量采集或通用清洁度自动判定"
+  },
+  "watermark": {
+    "preference": "acquire_clean_original_before_pixel_repair",
+    "inspection": [
+      "position_over_time",
+      "overlap_with_face_product_text_or_action",
+      "embedded_platform_subtitles"
+    ],
+    "fallbacks": [
+      "crop_if_composition_and_proof_survive",
+      "temporal_inpainting_with_full_video_review",
+      "replace_with_clean_shot_or_recreate_from_structure"
+    ],
+    "reject": [
+      "blur_patch_presented_as_clean",
+      "invented_product_text_or_color",
+      "damaged_application_action"
+    ],
+    "implementation_status": "standalone_lama_cli_ready_team_queue_pending",
+    "fallback_engine_strategy": "own_tracking_masks_quality_gate_and_call_replaceable_engines",
+    "production_engines": [],
+    "prototype_engines": [
+      "opencv_telea",
+      "lama_per_frame_cpu"
+    ],
+    "external_paid_provider_configured": false,
+    "latest_trial": "projects/sheglam-color-bloom/watermark-fallback-trial-v2/trial.json",
+    "latest_trial_production_approved": true,
+    "default_fallback_engine": "lama_per_frame_cpu",
+    "approval_scope": "lama.mp4 only; 6-second sample, not Telea, entire source or future videos",
+    "new_outputs_require_visual_review": true,
+    "billing": {
+      "local_engine_api_fee": 0,
+      "compute": "local_hardware",
+      "external_paid_provider_configured": false
+    },
+    "standalone_entry": "scripts/repair_video.py"
+  }
+}

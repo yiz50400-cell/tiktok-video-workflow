@@ -1,0 +1,9 @@
+# macOS / Linux 样例。合并到 Codex 配置前把 <项目目录> 替换为本机项目绝对路径；不要复制访问凭据到此文件。
+# MCP 通过本机 API 工作，使用前运行 <项目目录>/scripts/start.sh。
+[mcp_servers.team_video_workflow]
+command = "<项目目录>/.venv/bin/python"
+args = ["<项目目录>/scripts/mcp.py"]
+
+[mcp_servers.team_video_workflow.env]
+WORKFLOW_API_URL = "http://127.0.0.1:8765"
+WORKFLOW_DATA_DIR = "<项目目录>/.runtime"
