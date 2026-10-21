@@ -1,8 +1,10 @@
 # Codex 商品视频工作流
 
-客户及其团队的操作入口为 **Codex**。Codex 调用本机脚本/MCP 保存任务、素材、稿件和制作证据。当前范围到成片、独立字幕、中文说明和本机交付包结束；紫鸟、TikTok Studio、上传、草稿、挂商品和发布由员工自行手动完成。交付采用 GitHub 源码下载与本机部署，Codex 保持员工工作台。公开仓库：https://github.com/yiz50400-cell/tiktok-video-workflow
+客户及其团队的操作入口为 **Codex 桌面版**。**默认路径是无人值守**：工作台只负责「启动视频工作流」和一句话投任务；后台 `unattended.py watch` / `once --produce` + ChatCut MCP 自动做到成片，**不**在对话里逐步审中文稿、当地语言稿或音色试听。公开仓库：https://github.com/yiz50400-cell/tiktok-video-workflow
 
-客户说明商品、市场、本次制作数量和创作要求，可同时提供素材路径、参考或文案。Codex先检查客户提供的素材，再按需求使用自带素材、补充采集或混合剪辑，完成中文稿确认、内部本地化与复核、配音剪辑和本机交付。客户明确只用自带素材时按该范围执行；素材齐备即可进入制作。默认创作方向与客户要求优先级见[项目规则](AGENTS.md)，已验证耗时与待补验收见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
+当前范围到成片、独立字幕、中文说明和本机交付包结束；紫鸟、TikTok Studio、上传、草稿、挂商品和发布由员工自行手动完成。交付采用 GitHub 源码下载与本机部署。
+
+客户用一句话说清商品、市场、数量和风格（可附素材路径）。无人值守自动采集/混剪、内部本地化与复核、配音剪辑并写入 `delivery/`。仅当客户**明确要求**对话精修时，才走员工交互审稿。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
 
 
 ## 获取源码
@@ -32,9 +34,9 @@ Codex 负责搜索、画面观察和语义创作；自动平台搜索、ASR/OCR�
 - 无人值守制作只需复制本仓库的 **ChatCut 瘦身 profile 样例**（`config/unattended-chatcut*.toml`）到自己的 `$CODEX_HOME`，再按本机路径改 `chatcut-mcp`；模型与渠道用你自己账号里已有的配置，或通过环境变量 `VW_CODEX_MODEL` / 参数 `--codex-model` 指定。
 - 详细 profile 说明见 [docs/unattended-codex-profile.md](docs/unattended-codex-profile.md)；Windows 完整步骤见 [docs/Windows源码部署.md](docs/Windows源码部署.md)。
 
-## 直接在 Codex 执行
+## 高级：直接 CLI / 对话精修（非默认）
 
-Python 3.12+，项目独立依赖：
+仅当客户明确要求逐步审稿、改稿或调试单任务时使用。日常请用上一节无人值守。Python 3.12+，项目独立依赖：
 
 ```sh
 uv venv --python 3.12 .venv
@@ -49,7 +51,7 @@ uv pip install --python .venv/bin/python -r requirements.lock.txt -r requirement
 .venv/bin/python scripts/workflow.py run job_实际ID
 ```
 
-Codex 替员工执行这些命令；员工直接说商品、市场和数量，有自有素材时可补充路径。没有网页/Node/前端构建或常驻服务前置要求。可以从其他工作目录使用项目脚本与 Python 的绝对路径。
+以上命令供调试或显式精修；默认仍是 enqueue + watch。没有网页/Node/前端构建或常驻服务前置要求。可从其他工作目录使用项目脚本与 Python 的绝对路径。
 
 支持墨西哥（MX）、巴西（BR）、印尼（ID）、菲律宾（PH）。数量使用本次指定的1–100整数；示例命令中的7仅用于展示调用。创建时已规划/成片为0；`plan-batch` 登记实际创意，`run` 显示逐条阶段和本机交付数。菲律宾语言可在创建时指定，或用 `set-language` 后选。格式与状态见 [批量模块](docs/modules/batch.md)、[完整链路](docs/employee/pipeline.md)。
 
@@ -95,47 +97,33 @@ Codex根据客户需求使用本地素材、按需采集或混合制作。使用
 
 实施顺序及每步展示方式见 `docs/阶段验收.md`。
 
-<!-- unattended-stage1-readme -->
-## 无人值守收件箱（阶段1）
+<!-- unattended-default-readme -->
+## 日常默认：无人值守
 
-阶段 1 只做本地 JSON 收件、健康检查、单并发认领和 workflow job 创建，不运行 ChatCut 制作、pipeline 或发布。incoming 也可理解为 pending。
+**这是默认用法。** Codex 对话不要逐步审稿/试听；工作台只启值班、投任务、查结果。
 
-推荐一句话投递（内部写成 JSON 再入队，无需手写文件）：
-
-```bash
-.venv/bin/python scripts/unattended.py enqueue --text '墨西哥唇釉做2条，自然带货'
-echo 'Brazil lipstick 3 videos, tutorial' | .venv/bin/python scripts/unattended.py enqueue --text -
-.venv/bin/python scripts/unattended.py once
-.venv/bin/python scripts/unattended.py list
-```
-
-也可仍用 JSON 文件：
+| 客户说法 | Codex 应做 |
+| --- | --- |
+| 「启动视频工作流」 | 确认 ChatCut 已开；接通电源时不睡眠；后台启动 `.venv/.../python -X utf8 scripts/unattended.py watch`（不设开机自启） |
+| 一句话任务（可多条） | `scripts/unattended.py enqueue --text "..."`；由 `watch` 制作，或单次 `once --produce` |
+| 「做完了吗」 | `scripts/unattended.py list`，成片在各任务 `delivery/` |
 
 ```bash
-.venv/bin/python scripts/unattended.py enqueue --file /绝对路径/request.json
+# macOS / Linux（Windows 见 docs/Windows源码部署.md，用 .venv\Scripts\python.exe）
+.venv/bin/python -X utf8 scripts/unattended.py watch
+.venv/bin/python -X utf8 scripts/unattended.py enqueue --text '墨西哥唇釉做2条，自然带货'
+.venv/bin/python -X utf8 scripts/unattended.py enqueue --text '巴西润唇膏做3条，真人试用种草，无自带素材'
+.venv/bin/python -X utf8 scripts/unattended.py once --produce   # 单次验证；正式可只用 watch
+.venv/bin/python -X utf8 scripts/unattended.py list
 ```
 
+也可：`enqueue --text -`（stdin）或 `enqueue --file /绝对路径/request.json`。
 
+制作走 ChatCut MCP（`codex exec` + 瘦身 profile）。**禁止**默认进入员工交互审中文稿/当地语言稿/音色试听；**禁止** ChatCut 应用内 AI、Computer Use、`submit_*`；**禁止**拷贝他人 Codex `auth.json` / 密钥。无 BGM。自动放行写 audit，不是假冒用户签字。
 
-### 阶段2：一句话到成片（需显式 --produce）
+一句话需能解析出**市场**（MX/BR/ID/PH 或 墨西哥/巴西/印尼/菲律宾）和**商品**；条数可写「做2条 / 两条 / 3 videos」，缺省为 1。逗号后或 `style:` 后为风格。
 
-默认 `once` **只 create**。制作必须加 `--produce`（内部 `codex exec -m 6a` + ChatCut 瘦身 profile）：
+Profile：[docs/unattended-codex-profile.md](docs/unattended-codex-profile.md)。数据根默认 `.runtime/unattended/`（可用 `WORKFLOW_DATA_DIR`）。schema / 幂等见 [无人值守设计](docs/无人值守设计.md)。
 
-```bash
-cp config/unattended-chatcut.config.toml "${CODEX_HOME:-$HOME/.codex}/unattended-chatcut.config.toml"
-DEMO=$(mktemp -d /tmp/vw-demo-unattended-XXXXXX)
-export WORKFLOW_DATA_DIR="$DEMO"
-.venv/bin/python scripts/unattended.py enqueue --text '墨西哥唇釉做2条，自然带货'
-.venv/bin/python scripts/unattended.py once --produce
-.venv/bin/python scripts/unattended.py list
-# 成片：$WORKFLOW_DATA_DIR/unattended/tasks/<task_id>/delivery/
-```
-
-Profile 说明见 [docs/unattended-codex-profile.md](docs/unattended-codex-profile.md)。禁止发布；自动放行会写 audit，不是假冒用户签字。
-
-一句话需能解析出**市场**（MX/BR/ID/PH 或 墨西哥/巴西/印尼/菲律宾）和**商品**；条数可写「做2条 / 两条 / 3 videos」，缺省为 1。逗号后或 `style:` 后为风格。缺市场或缺商品会中文报错。
-
-可选 `concepts` 必须使用与 `workflow.py plan-batch` 相同的创意对象字段，不能只写字符串。
-
-数据根默认是 `.runtime/unattended/`，也可通过 `WORKFLOW_DATA_DIR` 覆盖。完整 schema、幂等/冲突规则及 launchd/Task Scheduler 周期调用说明见 [无人值守设计](docs/无人值守设计.md)。
+下方「直接在 Codex 执行」的 `workflow.py create/run` 与对话审稿链路为**高级/显式精修**入口，不是默认。
 

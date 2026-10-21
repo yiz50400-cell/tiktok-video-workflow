@@ -1,6 +1,6 @@
 # Windows 源码部署（当前交付方式）
 
-更新：2026-10-19（Asia/Shanghai）。本页是 Windows 客户的唯一部署说明。交付方式为 **GitHub 源码下载 + 客户现有 Codex 作为工作台**，不提供安装包、Electron 桌面端或常驻网页。旧的桌面安装包说明见 [Windows桌面交付-2026-10-14](Windows桌面交付-2026-10-14.md)（历史归档）。
+更新：2026-10-21（Asia/Shanghai）。本页是 Windows 客户的唯一部署说明。交付方式为 **GitHub 源码下载 + 客户现有 Codex 作为工作台**，不提供安装包、Electron 桌面端或常驻网页。旧的桌面安装包说明见 [Windows桌面交付-2026-10-14](Windows桌面交付-2026-10-14.md)（历史归档）。
 
 范围：到本机成片、独立字幕、中文说明和本机交付包结束。第07步发布（紫鸟、TikTok Studio、上传、草稿、挂商品、发布）不在范围内，由员工手动完成。
 
@@ -52,24 +52,46 @@ LaMa 局部修补（torch/opencv，体积数 GB）不属于基础安装，需要
 
 诊断报告写入 `.runtime/windows-engine-check/`。只有在 Windows 上实际产生的报告才算 Windows 平台验收，macOS 结果不能替代。
 
-## 4. 日常使用（由 Codex 代为执行）
+## 4. 日常使用（默认 = 无人值守）
 
-分工：**Codex 桌面版是工作台，后台引擎干活**。每次开机后在桌面版说一句“启动视频工作流”，由它在后台启动值班程序 `scripts\unattended.py watch`（每 30 秒检查任务收件箱，不设开机自启）。之后在桌面版用一句话投任务（可一次投多条，排队制作），投完即可关闭对话离开；成片放在各任务的 `delivery` 文件夹，回到桌面版问“做完了吗”即可查看。
+分工：**Codex 桌面版是工作台，后台引擎干活**。**默认就是无人值守**，不要把一句话任务带进对话逐步审中文稿 / 葡语稿 / 音色试听。
 
-每条任务做好或失败时，值班程序会在 Windows 右下角弹**一次**系统通知（写明任务号和成片位置或失败原因），使用系统自带 PowerShell，无需额外安装；不想要提醒可设环境变量 `WORKFLOW_NOTIFY=0`。
-
-员工在 Codex 里说明商品、市场、数量和要求，Codex 调用：
+| 客户说法 | Codex 必须做 |
+| --- | --- |
+| 「启动视频工作流」 | 确认 ChatCut 已打开；接通电源时不睡眠（见 §5.2）；在项目目录后台启动 `.venv\Scripts\python.exe -X utf8 scripts\unattended.py watch`（每 30 秒扫收件箱）。**不要设开机自启。** |
+| 一句话任务（可多条） | `.venv\Scripts\python.exe -X utf8 scripts\unattended.py enqueue --text "..."`；由 `watch` 制作，或单次验证用 `once --produce` |
+| 「做完了吗」 | `unattended.py list`；成片在各任务 `delivery/` |
 
 ```powershell
-.venv/Scripts/python.exe -X utf8 scripts/workflow.py create --title "商品巴西批次" --product "指定商品" --market BR --count 7 --style "达人试用"
-.venv/Scripts/python.exe -X utf8 scripts/workflow.py list
-.venv/Scripts/python.exe -X utf8 scripts/workflow.py show job_实际ID
-.venv/Scripts/python.exe -X utf8 scripts/workflow.py import job_实际ID "D:\素材\商品素材.mp4"
-.venv/Scripts/python.exe -X utf8 scripts/workflow.py pipeline-inputs job_实际ID "D:\任务\链路输入.json"
-.venv/Scripts/python.exe -X utf8 scripts/workflow.py run job_实际ID
+# 启动值班（「启动视频工作流」）
+.venv\Scripts\python.exe -X utf8 scripts\unattended.py watch
+
+# 投任务（可连续多条）
+.venv\Scripts\python.exe -X utf8 scripts\unattended.py enqueue --text "巴西润唇膏做3条，真人试用种草，无自带素材"
+.venv\Scripts\python.exe -X utf8 scripts\unattended.py enqueue --text "墨西哥唇釉做1条，自然带货"
+
+# 单次验证（可选；正式用 watch 即可）
+.venv\Scripts\python.exe -X utf8 scripts\unattended.py once --produce
+
+.venv\Scripts\python.exe -X utf8 scripts\unattended.py list
 ```
 
-直接 CLI 方式不需要常驻服务。状态默认保存在 `<项目目录>\.runtime`，可用环境变量 `WORKFLOW_DATA_DIR` 指定独立目录。完整流程见 [docs/employee/pipeline.md](employee/pipeline.md)。
+投完即可关闭对话离开。每条任务做好或失败时，值班程序会在 Windows 右下角弹**一次**系统通知（任务号与成片位置或失败原因）；不想要提醒可设 `WORKFLOW_NOTIFY=0`。
+
+**禁止默认**：在 Codex 对话里展示中文稿等确认、当地语言全文确认、音色试听页确认、代表样片逐步批准。仅当客户**明确要求**对话精修时，才使用下面的 `workflow.py` 交互链路。
+
+### 4.1 高级：对话精修 / 直接 CLI（非默认）
+
+```powershell
+.venv\Scripts\python.exe -X utf8 scripts\workflow.py create --title "商品巴西批次" --product "指定商品" --market BR --count 7 --style "达人试用"
+.venv\Scripts\python.exe -X utf8 scripts\workflow.py list
+.venv\Scripts\python.exe -X utf8 scripts\workflow.py show job_实际ID
+.venv\Scripts\python.exe -X utf8 scripts\workflow.py import job_实际ID "D:\素材\商品素材.mp4"
+.venv\Scripts\python.exe -X utf8 scripts\workflow.py pipeline-inputs job_实际ID "D:\任务\链路输入.json"
+.venv\Scripts\python.exe -X utf8 scripts\workflow.py run job_实际ID
+```
+
+直接 CLI 不需要常驻服务。状态默认 `<项目目录>\.runtime`，可用 `WORKFLOW_DATA_DIR`。交互链路细节见 [docs/employee/pipeline.md](employee/pipeline.md)。
 
 ## 5. 可选：MCP 接入
 
@@ -126,7 +148,7 @@ powercfg /change monitor-timeout-ac 30
 
 ## 6. 客户数据与资源
 
-- 音色池：每个市场须先完成音色试听批准；制作配置中的 `voice_approval` 使用本机批准文件的绝对路径和 SHA-256。开发样片的巴西音色批准不随源码分发。
+- 音色池：每个市场须先完成音色试听批准（**建池时**，不是每条无人值守任务都在对话里试听）；制作配置中的 `voice_approval` 使用本机批准文件的绝对路径和 SHA-256。开发样片的巴西音色批准不随源码分发。
 - 字体：包装配置使用本机字体文件的绝对路径和 SHA-256，不依赖 macOS 系统字体。
 - 编码器：Windows 使用 `libx264`；`h264_videotoolbox` 仅限 macOS。
 - 跨机器迁移已有方案时，按实际目录重新绑定资源并核对哈希。
