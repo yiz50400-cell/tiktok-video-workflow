@@ -1,6 +1,12 @@
 # 无人值守成片制作（ChatCut Desktop MCP 直连）
 
-用本机已连接的 chatcut_desktop MCP 工具，把已采集的真实 TikTok 素材剪成 **1 条** {{market}} 市场 TikTok 种草竖屏成片并导出。全程无人值守：不要提问，不要等待确认，遇到工具报错就读报错、按下方示例修正参数后重试。
+用本机已连接的 chatcut_desktop MCP 工具，把已采集的真实 TikTok 素材剪成 **{{count}} 条** {{market}} 市场 TikTok 种草竖屏成片并导出。全程无人值守：不要提问，不要等待确认，遇到工具报错就读报错、按下方示例修正参数后重试。
+
+## 批次硬性规则（count={{count}}）
+1. **跨条禁止换序复用**：下方「批次素材分配」给每条成片划定了互不重复的 `clip_ids`。第 N 条只能用自己 bundle 里的素材；**禁止**把同一 `clip_id` / 同源文件在不同条之间换顺序复用凑数。
+2. 若某条分配的素材不够用，停下来在结果里 `ok=false` 说明缺料——**不要**去挪用其它条的素材，也不要用换序硬剪。
+3. **单条内禁止乒乓剪**：一条时间线里至少用到 bundle 内 ≥2 个不同 `clip_id`；禁止只用 1–2 条源素材来回交替铺满（例如 74→76→74→76… 这种假片节奏）。
+4. 导出 **恰好 {{count}} 个** 成片到 `export_paths_json` 列出的路径（count=1 时只用 `export_path`）。
 
 ## 规则
 1. 参考 `skills/team-video-workflow/chatcut-mcp.md` 与本文件「MCP 参数示例」，不要猜参数；不确定时先看 ALL_TOOLS 里的 inputSchema。
@@ -17,8 +23,8 @@
    - **开头第 1 个镜头和最后的 CTA 镜头**必须来自 `product_prominent: true` 的片段（`prominent_times` 附近），商品清楚、是画面主体；不许用人物/风景等生活方式镜头收尾。
    - 片段带 `"crop": "bottom"` / `"crop": "top"` 表示该片段原片有烧录文字，**必须裁掉**才能用：该镜头 item 不要写 `fit`，改用放大 1.35 倍的手动位置把文字推出画布——crop=bottom：`"left": -189, "top": 0, "width": 1458, "height": 2592`；crop=top：`"left": -189, "top": -672, "width": 1458, "height": 2592`（其余字段照常，`muted: true`）。`"crop": null` 的片段照常用 `fit: "cover"`。导出后会逐镜头自动复核，残留原片文字会被判不合格并要求重剪。
    - 可用片段较短时，用更短的镜头（≥1.0 秒）或在同一片段内取不同起点，不要越界。
-2. **分镜**：8–10 个镜头，每个 1.0–2.5 秒（30–75 帧 @30fps），总时长 15–22 秒；至少用到 2 条不同素材。结构：钩子（痛点/惊艳结果）→ 商品出场 → 2–4 个功能/效果演示 → 便利性/卖点 → 结尾 CTA。
-3. **建工程**：`create_project({"name": "{{project_name}}", "compositionWidth": 1080, "compositionHeight": 1920, "fps": 30})` → `target_project({"projectId": <projectId>})` → `edit_track({"action": "list"})`；需要时再建视频轨，保证有 V1（素材）和 V2（字幕 MG，在上层）。
+2. **分镜（每条成片各自一份）**：8–10 个镜头，每个 1.0–2.5 秒（30–75 帧 @30fps），总时长 15–22 秒；**本条**至少用到自己 bundle 内 2 个不同 `clip_id`，且不要整条时间线只在两段源之间乒乓。结构：钩子（痛点/惊艳结果）→ 商品出场 → 2–4 个功能/效果演示 → 便利性/卖点 → 结尾 CTA。
+3. **建工程**：每条成片一个工程（或 duplicate 后再改）。`create_project({"name": "{{project_name}}"（count>1 时加 " #1"/" #2"…）, "compositionWidth": 1080, "compositionHeight": 1920, "fps": 30})` → `target_project` → `edit_track({"action": "list"})`；需要时再建视频轨，保证有 V1（素材）和 V2（字幕 MG，在上层）。
 4. **导入素材**：对选用的素材 `push_asset({"filePath": "<clip path>", "type": "video"})`，记录 assetId。
 5. **上时间线**：在 V1 上按分镜一次（或分几次）`edit_item` adds，镜头首尾相接、不重叠、无空隙，`fit: "cover"`、`muted: true`，`sourceIn` 为**整数微秒**。
 6. **字幕 MG**：参照示例 `{{example_mg_path}}`（React/Remotion 风格：useCurrentFrame/interpolate/AbsoluteFill 已全局可用，不要 import），用 shell 写 `{{work_dir}}/captions.jsx`：
@@ -28,14 +34,23 @@
    - `push_asset({"filePath": "{{work_dir}}/captions.jsx", "type": "motion-graphic", "width": 1080, "height": 1920, "duration": <总帧数/30 秒换算成整数微秒>, "name": "captions"})`；若校验失败按返回诊断修改 jsx 后重新 push。
    - 在 V2 上 adds 一个 motion-graphic item：`startFrame 0`、`durationFrames = 总帧数`、`left 0, top 0, width 1080, height 1920`。
 7. **核对**：`read_project({})` 确认 V1 镜头连续、MG 覆盖全片、**没有任何 audio 轨/item**；`preview_timeline` 抽看 2–3 个时间点画面与字幕。有问题就修。
-8. **导出**：`export({"format": "video", "codec": "h264", "resolution": "1080p", "fps": 30, "outputPath": "{{export_path}}"})` → `track_progress({"action": "wait", "target": "export", "exportTaskIds": "<taskId>"})`。
-9. **写结果**：用 shell 写 UTF-8 JSON 到 `{{result_path}}`：
-   {"ok": true, "renderer": "chatcut", "project_id": "<uuid>", "project_name": "{{project_name}}", "export_paths": ["{{export_path}}"],
-    "duration_frames": <总帧数>, "captions_file": "{{work_dir}}/captions.jsx", "caption_lines": ["..."],
-    "shots": [{"index": 0, "path": "<clip path>", "source_in_s": 3.4, "duration_s": 2.0, "start_frame": 0, "duration_frames": 60, "crop": null, "shows": "画面内容"}],
-    "footage_used": [{"path": "<clip path>", "source_url": "<url>", "source_in_s": 3.4, "duration_s": 2.0, "shows": "画面内容"}],
-    "footage_rejected": [{"path": "...", "reason": "..."}], "notes": "..."}
-   失败时 ok=false 并写 error 字段（包括已创建的 project_id）。最终回复同样输出这个 JSON。
+8. **导出**：对每条成片 `export` 到 `export_paths_json` 中对应路径（count=1 时即 `{{export_path}}`）→ `track_progress` wait。
+9. **写结果**：用 shell 写 UTF-8 JSON 到 `{{result_path}}`。
+   - count=1 时保持旧格式：
+     {"ok": true, "renderer": "chatcut", "project_id": "<uuid>", "project_name": "{{project_name}}", "export_paths": ["{{export_path}}"],
+      "duration_frames": <总帧数>, "captions_file": "{{work_dir}}/captions.jsx", "caption_lines": ["..."],
+      "shots": [{"index": 0, "path": "<clip path>", "source_in_s": 3.4, "duration_s": 2.0, "start_frame": 0, "duration_frames": 60, "crop": null, "shows": "画面内容"}],
+      "footage_used": [{"path": "<clip path>", "source_url": "<url>", "clip_id": "<id>", "source_in_s": 3.4, "duration_s": 2.0, "shows": "画面内容"}],
+      "footage_rejected": [], "notes": "..."}
+   - count>1 时必须写：
+     {"ok": true, "renderer": "chatcut", "project_name": "{{project_name}}",
+      "export_paths": <export_paths_json 原样>,
+      "videos": [
+        {"video_index": 0, "project_id": "<uuid>", "export_path": "<path1>", "shots": [...], "footage_used": [{"path":"...","clip_id":"..."}], "caption_lines": ["..."]},
+        {"video_index": 1, "project_id": "<uuid>", "export_path": "<path2>", "shots": [...], "footage_used": [...], "caption_lines": ["..."]}
+      ],
+      "notes": "跨条 clip_id 互斥；单条无乒乓剪"}
+   失败时 ok=false 并写 error。最终回复同样输出这个 JSON。
 
 ## MCP 参数示例（ChatCut Desktop 0.6.13 实测，勿臆造）
 
@@ -67,16 +82,26 @@ code_mode 下调用名为 `tools.mcp__chatcut_desktop__<tool>`，先查 ALL_TOOL
 - market: {{market}}
 - work_dir: {{work_dir}}
 - export_path: {{export_path}}
+- export_paths_json:
+```json
+{{export_paths_json}}
+```
+- count: {{count}}
 - result_path: {{result_path}}
 - request:
 ```json
 {{request_json}}
 ```
 
+## 批次素材分配（硬性；每条只用自己的 clip_ids）
+```json
+{{batch_assignments_json}}
+```
+
 ## 商品形态定义
 {{product_definition}}
 
-## 素材清单（已过采集校验 + 视觉初筛，只能用这些素材的 usable_segments）
+## 素材清单（全池，已过采集校验 + 视觉初筛；剪辑时仍以「批次素材分配」为准）
 ```json
 {{footage_json}}
 ```

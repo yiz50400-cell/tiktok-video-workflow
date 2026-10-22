@@ -165,7 +165,13 @@ def render_produce_prompt(
 ) -> str:
     template = (template_path or DEFAULT_PROMPT_TEMPLATE).read_text(encoding="utf-8")
     template = FORBIDDEN_INAPP_AGENT_RULES + template
-    for key, value in (extra or {}).items():
+    merged = {
+        "count": str((request or {}).get("count") or 1),
+        "batch_assignments_json": "[]",
+        "export_paths_json": "[]",
+    }
+    merged.update(extra or {})
+    for key, value in merged.items():
         template = template.replace("{{" + key + "}}", str(value))
     template = template.replace("{{market}}", str(request.get("market") or ""))
     return (
@@ -462,6 +468,8 @@ class Producer:
         production = self.options.mode == "production"
         clips: list[dict[str, Any]] = []
         extra: dict[str, str] | None = None
+        self._batch_count = 1
+        self._batch_allowed_ids: list[set[str]] = []
         template_path = None if production else CANARY_PROMPT_TEMPLATE
 
         # P0-1: if delivery already has a qualifying mp4, treat as success — never re-cut.
@@ -517,22 +525,94 @@ class Producer:
                                       delivery_paths=[], audit_path=audit_path)
                 self._log(collection.reason)
             from dataclasses import asdict as _asdict
+            from .batch_footage import (
+                collect_targets,
+                partition_clips_disjoint,
+                video_count,
+            )
             clips = [_asdict(c) for c in collection.clips]
+            batch_n = video_count(request)
+            partition = partition_clips_disjoint(clips, batch_n)
+            if not partition.ok:
+                # One refill attempt: raise collect floors and avoid current ids via ledger-style avoid in collect.
+                self._log(f"批次素材不足，准备补采：{partition.reason}")
+                stages["batch_partition_initial"] = {
+                    "ok": False, "reason": partition.reason,
+                    "unique": partition.unique_count, "need": partition.need,
+                }
+                refill = self._run_collector(request, task_dir, force_min_clips=partition.need)
+                stages["collect_refill"] = {
+                    "ok": refill.ok, "reason": refill.reason,
+                    "clips": len(refill.clips), "candidates": len(refill.candidates),
+                }
+                if not refill.ok:
+                    return self._fail(
+                        task_id, workflow_job_id,
+                        f"同批 {batch_n} 条成片素材不够且补采失败：{partition.reason}；补采：{refill.reason}",
+                        delivery_paths=[], audit_path=audit_path,
+                    )
+                collection = refill
+                clips = [_asdict(c) for c in collection.clips]
+                partition = partition_clips_disjoint(clips, batch_n)
+                if not partition.ok:
+                    return self._fail(
+                        task_id, workflow_job_id,
+                        f"补采后仍无法为同批 {batch_n} 条成片分配互不重复素材：{partition.reason}",
+                        delivery_paths=[], audit_path=audit_path,
+                    )
+            stages["batch_partition"] = {
+                "ok": True, "reason": partition.reason,
+                "unique": partition.unique_count, "need": partition.need,
+                "per_video": [len(b) for b in partition.bundles],
+                "assignments": [
+                    {"video_index": i, "clip_ids": [str(c.get("clip_id")) for c in bundle]}
+                    for i, bundle in enumerate(partition.bundles)
+                ],
+            }
+            self._log(partition.reason)
+            self._batch_count = batch_n
+            self._batch_allowed_ids = [
+                {str(c.get("clip_id")) for c in bundle if c.get("clip_id")}
+                for bundle in partition.bundles
+            ]
+            (task_dir / "batch-assignments.json").write_text(
+                json.dumps(stages["batch_partition"], ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             footage_for_prompt = [
                 {k: c.get(k) for k in ("path", "source_url", "account", "title", "duration", "width", "height",
-                                       "screen_grid", "screen_times", "usable_segments")}
+                                       "screen_grid", "screen_times", "usable_segments", "clip_id")}
                 for c in clips
             ]
             from .collect import MARKET_LANGUAGE, resolve_ffmpeg
             market = str(request.get("market") or "MX")
             locale, language = MARKET_LANGUAGE.get(market, ("en", "English"))
-            export_path = exports_dir / f"{market}-{task_id}-chatcut.mp4"
+            export_paths_planned = [
+                str(exports_dir / f"{market}-{task_id}-chatcut-{i + 1}.mp4")
+                for i in range(batch_n)
+            ] if batch_n > 1 else [str(exports_dir / f"{market}-{task_id}-chatcut.mp4")]
+            export_path = export_paths_planned[0]
+            assignments = []
+            for i, bundle in enumerate(partition.bundles):
+                assignments.append({
+                    "video_index": i,
+                    "clip_ids": [str(c.get("clip_id")) for c in bundle if c.get("clip_id")],
+                    "clips": [
+                        {k: c.get(k) for k in (
+                            "clip_id", "path", "source_url", "account", "title", "duration",
+                            "width", "height", "screen_grid", "screen_times", "usable_segments",
+                        )}
+                        for c in bundle
+                    ],
+                })
             extra = {
                 "footage_json": json.dumps(footage_for_prompt, ensure_ascii=False, indent=2),
+                "batch_assignments_json": json.dumps(assignments, ensure_ascii=False, indent=2),
+                "count": str(batch_n),
                 "caption_language": language,
                 "caption_locale": locale,
                 "cta_example": CTA_EXAMPLE.get(market, "BUY NOW!"),
-                "export_path": str(export_path),
+                "export_path": export_path,
+                "export_paths_json": json.dumps(export_paths_planned, ensure_ascii=False, indent=2),
                 "project_name": f"{MARKET_LABEL.get(market, market)}{request.get('product')} TikTok 无人值守 {task_id[-8:]}",
                 "work_dir": str(task_dir / "work"),
                 "example_mg_path": str(EXAMPLE_MG_PATH),
@@ -624,6 +704,8 @@ class Producer:
             verdict = verify_production(
                 result_path=result_path, export_paths=export_paths, clips=clips,
                 events_path=logs_dir / "codex-events.jsonl",
+                expected_count=int(getattr(self, "_batch_count", 1) or 1),
+                allowed_clip_ids_per_video=getattr(self, "_batch_allowed_ids", None) or None,
             )
             stages["verify" + suffix] = {"ok": verdict.ok, "seconds": round(time.time() - t2, 1),
                                          "reason": verdict.reason, "details": verdict.details}
@@ -744,19 +826,37 @@ class Producer:
 
     def _review(self, result_path: Path, export_paths: list[Path], clips: list[dict[str, Any]],
                 request: dict[str, Any], task_dir: Path, suffix: str) -> tuple[list[str], Any]:
+        from .batch_footage import extract_per_video_results
         from .vision import check_shots, review_export
         from .collect import resolve_ffmpeg
 
         result = json.loads(result_path.read_text(encoding="utf-8"))
         issues = check_shots(result, clips)
         reviewer = self.options.reviewer or review_export
-        vision_issues, payload = reviewer(
-            export_paths[0], result, request,
-            product_definition=getattr(self, "_product_definition", "") or str(request.get("product") or ""),
-            workdir=task_dir / "review", ffmpeg=resolve_ffmpeg(), cta=getattr(self, "_cta", ""),
-            codex_bin=self.options.codex_bin, model=self.options.codex_model, name="review" + suffix,
-        )
-        return issues + list(vision_issues), payload
+        videos = extract_per_video_results(result, export_paths)
+        payloads: list[Any] = []
+        product_definition = getattr(self, "_product_definition", "") or str(request.get("product") or "")
+        cta = getattr(self, "_cta", "")
+        ffmpeg = resolve_ffmpeg()
+        for index, (export, video) in enumerate(zip(export_paths, videos)):
+            # review_export expects top-level shots/captions; synthesize a per-video view.
+            one = {
+                **result,
+                "shots": video.get("shots") or result.get("shots") or [],
+                "caption_lines": video.get("caption_lines") or result.get("caption_lines") or [],
+                "footage_used": video.get("footage_used") or result.get("footage_used") or [],
+            }
+            vision_issues, payload = reviewer(
+                export, one, request,
+                product_definition=product_definition,
+                workdir=task_dir / "review" / f"v{index}", ffmpeg=ffmpeg, cta=cta,
+                codex_bin=self.options.codex_bin, model=self.options.codex_model,
+                name=(f"review{suffix}" if len(export_paths) == 1 else f"review{suffix}-v{index}"),
+            )
+            payloads.append(payload)
+            prefix = "" if len(export_paths) == 1 else f"第 {index + 1} 条："
+            issues.extend(prefix + str(i) for i in vision_issues)
+        return issues, payloads if len(payloads) > 1 else (payloads[0] if payloads else None)
 
     @staticmethod
     def _feedback_prompt(base_prompt: str, issues: list[str], result_path: Path, exports_dir: Path, task_id: str,
@@ -860,13 +960,18 @@ class Producer:
         clips = payload.get("clips") if isinstance(payload, dict) else None
         return list(clips) if isinstance(clips, list) else []
 
-    def _run_collector(self, request: dict[str, Any], task_dir: Path):
+    def _run_collector(self, request: dict[str, Any], task_dir: Path, *, force_min_clips: int | None = None):
+        from .batch_footage import collect_targets, video_count
         from .collect import collect_footage
 
         collector = self.options.collector or collect_footage
         seed_dir = self.options.seed_dir
         if seed_dir is None:
             seed_dir = Path(self.options.project_root) / "config" / "discovery-seeds"
+        targets = collect_targets(video_count(request))
+        min_clips = max(int(self.options.min_clips), targets.min_clips)
+        if force_min_clips is not None:
+            min_clips = max(min_clips, int(force_min_clips))
         return collector(
             request,
             task_dir / "collection",
@@ -874,9 +979,11 @@ class Producer:
             model=self.options.codex_model,
             discover_timeout=self.options.discover_timeout_seconds,
             discover_attempts=self.options.discover_attempts,
-            discover_rounds=self.options.discover_rounds,
-            max_searches=self.options.discover_max_searches,
-            min_clips=self.options.min_clips,
+            discover_rounds=max(int(self.options.discover_rounds), targets.discover_rounds),
+            max_searches=max(int(self.options.discover_max_searches), targets.max_searches),
+            min_clips=min_clips,
+            max_clips=targets.max_clips,
+            max_candidates=targets.max_candidates,
             seed_dir=seed_dir,
             log=self._log,
         )

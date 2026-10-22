@@ -267,20 +267,34 @@ def _segments_for(path: str, clips: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def check_shots(result: dict[str, Any], clips: list[dict[str, Any]]) -> list[str]:
     """Deterministic shot rules; returns a list of issues (empty = pass)."""
-    shots = result.get("shots") or []
-    if not shots:
-        return ["结果文件缺少 shots 列表（每个镜头的 path/source_in_s/duration_s/start_frame/duration_frames）"]
+    from .batch_footage import (
+        extract_per_video_results,
+        within_video_near_dup_issues,
+    )
+
+    videos = extract_per_video_results(result, [])
+    if not videos:
+        return ["结果文件缺少 shots / videos 列表"]
     issues: list[str] = []
-    for index, shot in enumerate(shots):
-        segs = _segments_for(str(shot.get("path") or ""), clips)
-        start = float(shot.get("source_in_s") or 0)
-        end = start + float(shot.get("duration_s") or 0)
-        seg = next((s for s in segs if start >= s["start_s"] - SEGMENT_TOLERANCE_S and end <= s["end_s"] + SEGMENT_TOLERANCE_S), None)
-        label = "开头" if index == 0 else ("结尾CTA" if index == len(shots) - 1 else f"第{index + 1}")
-        if seg is None:
-            issues.append(f"{label}镜头 {Path(str(shot.get('path'))).name}@{start:.2f}-{end:.2f}s 不在初筛可用片段内")
-        elif index in (0, len(shots) - 1) and not seg["product_prominent"]:
-            issues.append(f"{label}镜头 {Path(str(shot.get('path'))).name}@{start:.2f}s 所在片段商品不突出")
+    for video in videos:
+        v_index = int(video.get("video_index") or 0)
+        prefix = "" if len(videos) == 1 else f"第 {v_index + 1} 条："
+        shots = video.get("shots") or []
+        if not shots:
+            issues.append(f"{prefix}结果文件缺少 shots 列表（每个镜头的 path/source_in_s/duration_s/start_frame/duration_frames）")
+            continue
+        for index, shot in enumerate(shots):
+            segs = _segments_for(str(shot.get("path") or ""), clips)
+            start = float(shot.get("source_in_s") or 0)
+            end = start + float(shot.get("duration_s") or 0)
+            seg = next((s for s in segs if start >= s["start_s"] - SEGMENT_TOLERANCE_S and end <= s["end_s"] + SEGMENT_TOLERANCE_S), None)
+            label = "开头" if index == 0 else ("结尾CTA" if index == len(shots) - 1 else f"第{index + 1}")
+            if seg is None:
+                issues.append(f"{prefix}{label}镜头 {Path(str(shot.get('path'))).name}@{start:.2f}-{end:.2f}s 不在初筛可用片段内")
+            elif index in (0, len(shots) - 1) and not seg["product_prominent"]:
+                issues.append(f"{prefix}{label}镜头 {Path(str(shot.get('path'))).name}@{start:.2f}s 所在片段商品不突出")
+        for issue in within_video_near_dup_issues(shots):
+            issues.append(prefix + issue)
     return issues
 
 

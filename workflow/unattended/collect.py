@@ -38,6 +38,8 @@ from .discover_speed import (
     UsedFootageLedger,
 )
 
+from .batch_footage import collect_targets, video_count
+
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 DISCOVER_TEMPLATE = PROMPTS_DIR / "tiktok_discover.md"
 
@@ -618,6 +620,25 @@ def collect_footage(
     timings: dict[str, float] = {}
     manifest_path = footage_dir / "collection.json"
 
+    # Scale discovery/screening floors with request.count so a batch of N videos
+    # gets enough unique sources for disjoint assignment (no within-batch reshuffle).
+    # count==1 keeps caller max_clips/candidates (tests pass explicit caps); count>1 expands.
+    batch_n = video_count(request)
+    targets = collect_targets(batch_n)
+    min_clips = max(int(min_clips), targets.min_clips)
+    if batch_n > 1:
+        max_clips = max(int(max_clips), targets.max_clips)
+        max_candidates = max(int(max_candidates), targets.max_candidates)
+        discover_rounds = max(int(discover_rounds), targets.discover_rounds)
+        max_searches = max(int(max_searches), targets.max_searches)
+    else:
+        max_clips = max(int(max_clips), min_clips)
+    screen_min_accepted = targets.screen_min_accepted
+    screen_min_usable_s = targets.screen_min_usable_s
+    screen_min_prominent = targets.screen_min_prominent
+    timings["batch_count"] = float(batch_n)
+    timings["target_min_clips"] = float(min_clips)
+
     state: dict[str, Any] = {"definition": "", "screened_out": []}
     used_ids: set[str] = set()
 
@@ -652,9 +673,21 @@ def collect_footage(
     form_hints = infer_form_hints(product, str(request.get("notes") or ""), str(request.get("style") or ""))
     state["definition"] = form_hints.definition if form_hints.profile != "generic" else ""
     used_ids = UsedFootageLedger.load(seed_dir, request, form_hints.profile) if avoid_used else set()
+
+    def _screen_ok(kept_clips: list[Clip]) -> tuple[bool, str]:
+        return screening_sufficient(
+            kept_clips,
+            min_accepted=screen_min_accepted,
+            min_usable_s=screen_min_usable_s,
+            min_prominent=screen_min_prominent,
+        )
+
     fallback: list[Candidate] = []  # already-used footage, only touched when fresh footage is short
     if used_ids:
         log(f"采集-已用素材台账 {len(used_ids)} 条（profile={form_hints.profile}），本次优先找没用过的新素材")
+    log(
+        f"采集-批次目标 count={int(timings['batch_count'])} → min_clips≥{min_clips}/max_clips={max_clips}/candidates={max_candidates}/rounds={discover_rounds}/searches={max_searches}；初筛≥{screen_min_accepted}条/≥{screen_min_usable_s:.0f}s/突出≥{screen_min_prominent}"
+    )
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
     runner = discovery_runner or default_discovery_runner
     ffmpeg = resolve_ffmpeg()
@@ -776,7 +809,7 @@ def collect_footage(
         seed_screen_ok = False
         if seed_cands:
             seed_clips, seed_screen_ok = ingest_candidates(seed_cands, rnd=0, tag=".seed")
-        enough, summary = screening_sufficient(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
+        enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
         if seed_cands and skip_discovery_if_seeds and ((seed_screen_ok or enough) if screen else len(kept) >= min_clips):
             timings["discover_s"] = timings.get("discover_s", 0.0)
             timings["discovery_calls"] = 0
@@ -784,7 +817,7 @@ def collect_footage(
 
     for rnd in range(1, max(1, discover_rounds) + 1):
         # If seeds already almost enough, still allow one discovery round only when needed.
-        enough, summary = screening_sufficient(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
+        enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
         if enough if screen else len(kept) >= min_clips:
             timings["discovery_calls"] = discovery_calls
             return finish(True, f"采集完成（{rnd - 1} 轮检索 + 种子）：累计{summary}", kept, all_candidates, keywords)
@@ -880,13 +913,13 @@ def collect_footage(
         if not screen:
             timings["discovery_calls"] = discovery_calls
             return finish(True, f"采集完成：{len(kept)} 条 TikTok 竖屏素材入库（未做视觉初筛）", kept, all_candidates, keywords)
-        enough, summary = screening_sufficient(kept)
+        enough, summary = _screen_ok(kept)
         if screen_ok or enough:
             timings["discovery_calls"] = discovery_calls
             return finish(True, f"采集完成（{rnd} 轮检索）：累计{summary}", kept, all_candidates, keywords)
         last_reason = (
-            f"质量初筛不足（需 ≥{SCREEN_MIN_ACCEPTED} 条、≥{SCREEN_MIN_USABLE_S:.0f}s、"
-            f"突出片段 ≥{SCREEN_MIN_PROMINENT}，已检索 {rnd} 轮）：累计{summary}"
+            f"质量初筛不足（需 ≥{screen_min_accepted} 条、≥{screen_min_usable_s:.0f}s、"
+            f"突出片段 ≥{screen_min_prominent}，已检索 {rnd} 轮）：累计{summary}"
         )
         if rnd < discover_rounds:
             log(f"第 {rnd} 轮初筛后仍不足（{summary}），带着淘汰原因做第 {rnd + 1} 轮补充检索。")
@@ -896,7 +929,7 @@ def collect_footage(
         seen.update(c.video_id for c in fallback)
         all_candidates += fallback
         ingest_candidates(fallback, rnd=99, tag=".reused")
-        enough, summary = screening_sufficient(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
+        enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
         if enough:
             return finish(True, f"采集完成（新素材不足，含旧素材补位）：累计{summary}", kept, all_candidates, keywords)
         last_reason = f"{last_reason}；旧素材补位后仍不足：{summary}"
@@ -908,11 +941,28 @@ SCREEN_MIN_USABLE_S = 12.0
 SCREEN_MIN_PROMINENT = 2
 
 
-def screening_sufficient(kept: list[Clip]) -> tuple[bool, str]:
+def screening_sufficient(
+    kept: list[Clip],
+    *,
+    min_accepted: int | None = None,
+    min_usable_s: float | None = None,
+    min_prominent: int | None = None,
+) -> tuple[bool, str]:
+    """Whether kept clips are enough to start produce.
+
+    Thresholds scale with batch ``count`` (see ``collect_targets``) so a 3-video
+    enqueue cannot stop after only 2 screened sources and then reshuffle them.
+    """
+    need_n = SCREEN_MIN_ACCEPTED if min_accepted is None else int(min_accepted)
+    need_s = SCREEN_MIN_USABLE_S if min_usable_s is None else float(min_usable_s)
+    need_p = SCREEN_MIN_PROMINENT if min_prominent is None else int(min_prominent)
     usable_s = sum(s["end_s"] - s["start_s"] for c in kept for s in c.usable_segments)
     prominent = sum(1 for c in kept for s in c.usable_segments if s.get("product_prominent"))
-    summary = f"同款合格 {len(kept)} 条，可用片段 {usable_s:.1f}s，商品突出片段 {prominent} 个"
-    ok = len(kept) >= SCREEN_MIN_ACCEPTED and usable_s >= SCREEN_MIN_USABLE_S and prominent >= SCREEN_MIN_PROMINENT
+    summary = (
+        f"同款合格 {len(kept)} 条（需≥{need_n}），可用片段 {usable_s:.1f}s（需≥{need_s:.0f}），"
+        f"商品突出片段 {prominent} 个（需≥{need_p}）"
+    )
+    ok = len(kept) >= need_n and usable_s >= need_s and prominent >= need_p
     return ok, summary
 
 
