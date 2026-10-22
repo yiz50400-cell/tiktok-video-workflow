@@ -12,6 +12,7 @@
 - Python 3.12（可由 uv 自动获取：`uv python install 3.12`）。
 - **ChatCut Desktop（Windows x64）** 已安装、至少打开一次并登录同一账号。官方下载：`https://api.chatcut.io/desktop/download/windows`。制作期间保持 ChatCut 开着。
 - 采集 TikTok 素材需要能访问 TikTok 的网络（客户机若需代理/VPN，请先配好；未连通时 yt-dlp 会 403/超时）。
+  - **Clash Verge**：仅「规则」模式时常**不**接管 Python/yt-dlp 命令行。采集卡住并报 `TikTok 不可达` / `访问受限` 时，先切 **全局** 或打开 **TUN/系统代理**，用浏览器打开 `https://www.tiktok.com` 确认能进；仍不行再换节点/会话。也可在启动 `watch` 的同一终端设 `$env:HTTPS_PROXY="http://127.0.0.1:7897"`（端口以 Clash 混合端口为准；可用 `VW_YTDLP_PROXY` 只给 yt-dlp）。空转多轮检索修不好网络问题。
 - FFmpeg **不必单独安装**：`imageio-ffmpeg` 会随 `requirements.lock.txt` 带上；yt-dlp 在装了 `requirements-collect.txt` 后可用。
 - 配音（edge-tts）需要可用网络。
 

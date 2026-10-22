@@ -464,6 +464,11 @@ def keyword_hit(info: dict[str, Any], keywords: list[str]) -> bool:
 AUDIO_SUFFIXES = {".m4a", ".mp3", ".aac", ".opus", ".ogg", ".wav"}
 
 
+class TikTokUnreachableError(RuntimeError):
+    """Fail-fast: this machine cannot download from TikTok right now."""
+
+
+
 AVOID_LIMIT = 120
 
 
@@ -479,8 +484,54 @@ class AvoidList:
 class DownloadFailure:
     """Turns yt-dlp output into a human reason (never just a WARNING line)."""
 
-    @staticmethod
-    def describe(returncode: int, output: str, raw_dir: Path, video_id: str) -> str:
+    # yt-dlp / TikTok patterns that mean this machine cannot reach TikTok usefully.
+    UNREACHABLE_MARKERS = (
+        "unable to extract webpage video data",
+        "unable to download webpage",
+        "http error 403",
+        "403: forbidden",
+        "403 forbidden",
+        "access denied",
+        "blocked",
+        "ip address",
+        "your ip",
+        "rate-limit",
+        "rate limit",
+        "captcha",
+        "login required",
+        "cookies are needed",
+        "connection refused",
+        "connection reset",
+        "timed out",
+        "timeout",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "network is unreachable",
+        "failed to resolve",
+        "ssl: unexpected eof",
+        "ssl: certificate",
+        "tunnel connection failed",
+        "proxy error",
+    )
+
+    OPERATOR_TIP = (
+        "TikTok 不可达：本机 yt-dlp 访问 TikTok 被拦（常见于 Clash「规则」模式未接管命令行）。"
+        "请把 Clash Verge 切「全局」或开 TUN/系统代理，浏览器能打开 tiktok.com 后再重试；"
+        "或给采集进程设 HTTPS_PROXY=http://127.0.0.1:7897（端口按 Clash 混合端口改）。"
+        "换节点/换会话也可能有效。空转多轮检索或换候选链接修不好网络。"
+    )
+
+    @classmethod
+    def is_unreachable(cls, reason: str | None) -> bool:
+        blob = (reason or "").casefold()
+        if not blob:
+            return False
+        if "tiktok 不可达" in blob or "访问受限" in blob:
+            return True
+        return any(m in blob for m in cls.UNREACHABLE_MARKERS)
+
+    @classmethod
+    def describe(cls, returncode: int, output: str, raw_dir: Path, video_id: str) -> str:
         """Return the real reason a download produced no video, never just a WARNING line."""
         audio = [p for p in raw_dir.glob(f"{video_id}.*") if p.suffix.lower() in AUDIO_SUFFIXES]
         info: dict[str, Any] = {}
@@ -496,12 +547,71 @@ class DownloadFailure:
             return "不是视频：只有音频（多半是图文/轮播帖），已跳过"
         lines = [l.strip() for l in output.strip().splitlines() if l.strip()]
         errors = [l for l in lines if l.startswith("ERROR") or "ERROR:" in l]
+        joined = "\n".join(errors or [l for l in lines if not l.startswith("WARNING")])
+        if cls.is_unreachable(joined) or cls.is_unreachable(output):
+            detail = ("yt-dlp: " + " | ".join(errors[-2:]))[:180] if errors else "网络/代理层失败"
+            return f"TikTok 不可达（访问受限）。{detail}。处理：{cls.OPERATOR_TIP}"
         if errors:
             return ("yt-dlp: " + " | ".join(errors[-2:]))[:400]
         others = [l for l in lines if not l.startswith("WARNING")]
         if returncode == 0:
             return "yt-dlp 正常结束但没有生成视频文件" + (f"（{others[-1][:200]}）" if others else "")
         return (f"yt-dlp 退出码 {returncode}" + (": " + " | ".join(others[-2:]) if others else "（只有警告输出，无具体错误）"))[:400]
+
+
+def ytdlp_proxy_args() -> list[str]:
+    """Pass Clash/local proxy to yt-dlp when the process env has one (CLI often bypasses system proxy)."""
+    for key in (
+        "VW_YTDLP_PROXY",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ):
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return ["--proxy", value]
+    return []
+
+
+def network_block_reason(candidates: list[Candidate], *, min_failures: int = 5) -> str | None:
+    """If a batch of downloads all died on TikTok reachability, return a fail-fast reason."""
+    tried = [c for c in candidates if c.status in {"download_failed", "downloaded"}]
+    downloaded = [c for c in tried if c.status == "downloaded"]
+    failed = [c for c in tried if c.status == "download_failed"]
+    if downloaded or len(failed) < min_failures:
+        return None
+    unreachable = [c for c in failed if DownloadFailure.is_unreachable(c.failure_reason)]
+    if len(unreachable) < max(min_failures, int(0.8 * len(failed))):
+        return None
+    return (
+        f"采集失败：连续 {len(unreachable)}/{len(failed)} 条候选因 TikTok 不可达下载失败，已停止空转重试。"
+        f"{DownloadFailure.OPERATOR_TIP}"
+    )
+
+
+DISCOVERY_NO_SEARCH_MARKERS = (
+    "无法检索并核实",
+    "无法检索",
+    "没有可用的网页搜索",
+    "无可用的网页搜索",
+    "没有网页搜索工具",
+    "网页搜索工具不可用",
+    "no usable web search",
+    "web search unavailable",
+    "web_search unavailable",
+    "cannot search and verify",
+)
+
+
+def discovery_admits_no_search(text: str | None) -> bool:
+    blob = text or ""
+    low = blob.casefold()
+    if any(marker.casefold() in low for marker in DISCOVERY_NO_SEARCH_MARKERS):
+        return True
+    return bool(re.search(r"没有可用.{0,12}搜索工具", blob))
 
 
 def download_candidate(
@@ -514,7 +624,9 @@ def download_candidate(
         "--no-playlist", "--no-progress", "--write-info-json",
         "-f", "b[vcodec^=h264]/b[vcodec^=avc]/bv*[vcodec^=avc]+ba/b",
         "--merge-output-format", "mp4", "--ffmpeg-location", ffmpeg,
-        "--socket-timeout", "30", "--retries", "2", "-o", out_tmpl, cand.url,
+        "--socket-timeout", "30", "--retries", "2",
+        *ytdlp_proxy_args(),
+        "-o", out_tmpl, cand.url,
     ]
     try:
         completed = runner(cmd, capture_output=True, text=True, timeout=timeout, check=False)
@@ -805,6 +917,9 @@ def collect_footage(
                 log(f"  入库 {clip.clip_id} {clip.width}x{clip.height} {clip.duration:.1f}s 关键词命中={clip.keyword_hit}")
             else:
                 log(f"  候选 {cand.url} 未入库：{cand.failure_reason}")
+        blocked = network_block_reason(pending)
+        if blocked:
+            raise TikTokUnreachableError(blocked)
         add_time("download_validate_s", started)
         clips.sort(key=lambda c: (not c.keyword_hit))
         if not screen:
@@ -872,7 +987,12 @@ def collect_footage(
         log(f"采集-种子命中：没用过 {len(seed_cands)} 条，已用过 {len(fallback)} 条排到最后（profile={form_hints.profile}）")
         seed_screen_ok = False
         if seed_cands:
-            seed_clips, seed_screen_ok = ingest_candidates(seed_cands, rnd=0, tag=".seed")
+            try:
+                seed_clips, seed_screen_ok = ingest_candidates(seed_cands, rnd=0, tag=".seed")
+            except TikTokUnreachableError as exc:
+                timings["discovery_calls"] = 0
+                log(str(exc))
+                return finish(False, str(exc), kept, all_candidates, keywords or [product])
         enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
         if seed_cands and skip_discovery_if_seeds and ((seed_screen_ok or enough) if screen else len(kept) >= min_clips):
             timings["discover_s"] = timings.get("discover_s", 0.0)
@@ -935,6 +1055,14 @@ def collect_footage(
                 log(f"采集-检索第 {rnd} 轮第 {attempt} 次 Codex 超时（{discover_timeout}s）")
                 continue
             text = last_path.read_text(encoding="utf-8") if last_path.is_file() else ""
+            if discovery_admits_no_search(text) and not parse_discovery_output(text)[0]:
+                timings["discovery_calls"] = discovery_calls
+                return finish(
+                    False,
+                    "采集-检索失败：Codex 会话没有可用的 web_search，无法核实 TikTok 链接（不要空转重试）。"
+                    "请确认 Codex CLI 已登录、当前模型支持 live web_search，或在桌面版启用网页搜索后重试。",
+                    [], all_candidates, keywords,
+                )
             parsed, kws = parse_discovery_output(text)
             candidates = [c for c in parsed if c.video_id not in seen]
             reused = [c for c in candidates if c.video_id in used_ids]
@@ -979,7 +1107,12 @@ def collect_footage(
             last_reason = f"{last_reason}；第 {rnd} 轮补充检索没有新候选"
             continue
 
-        clips, screen_ok = ingest_candidates(candidates, rnd=rnd, tag=tag)
+        try:
+            clips, screen_ok = ingest_candidates(candidates, rnd=rnd, tag=tag)
+        except TikTokUnreachableError as exc:
+            timings["discovery_calls"] = discovery_calls
+            log(str(exc))
+            return finish(False, str(exc), kept, all_candidates, keywords)
         if rnd == 1 and not screen and len(kept) < min_clips and not seed_rows:
             timings["discovery_calls"] = discovery_calls
             return finish(
@@ -1008,7 +1141,10 @@ def collect_footage(
         log(f"采集-新素材不够（{last_reason}），启用 {len(fallback)} 条之前用过的素材补位")
         seen.update(c.video_id for c in fallback)
         all_candidates += fallback
-        ingest_candidates(fallback, rnd=99, tag=".reused")
+        try:
+            ingest_candidates(fallback, rnd=99, tag=".reused")
+        except TikTokUnreachableError as exc:
+            return finish(False, str(exc), kept, all_candidates, keywords)
         enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
         if enough:
             return finish(True, f"采集完成（新素材不足，含旧素材补位）：累计{summary}", kept, all_candidates, keywords)

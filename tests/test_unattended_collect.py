@@ -744,6 +744,93 @@ def test_download_failure_reports_real_reason(tmp_path):
     assert "impersonat" not in DownloadFailure.describe(1, warn, tmp_path, "789")
 
 
+
+def test_download_failure_maps_tiktok_unreachable(tmp_path):
+    from workflow.unattended.collect import DownloadFailure
+
+    msg = DownloadFailure.describe(
+        1,
+        "ERROR: [TikTok] 456: Unable to extract webpage video data",
+        tmp_path,
+        "456",
+    )
+    assert "TikTok 不可达" in msg
+    assert DownloadFailure.is_unreachable(msg)
+    assert "全局" in msg or "HTTPS_PROXY" in msg
+    assert not DownloadFailure.is_unreachable("不是视频：只有音频（多半是图文/轮播帖），已跳过")
+
+
+def test_ytdlp_proxy_args_from_env(monkeypatch):
+    from workflow.unattended import collect as mod
+
+    monkeypatch.delenv("VW_YTDLP_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    monkeypatch.delenv("all_proxy", raising=False)
+    assert mod.ytdlp_proxy_args() == []
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+    assert mod.ytdlp_proxy_args() == ["--proxy", "http://127.0.0.1:7897"]
+    monkeypatch.setenv("VW_YTDLP_PROXY", "http://127.0.0.1:7890")
+    assert mod.ytdlp_proxy_args() == ["--proxy", "http://127.0.0.1:7890"]
+
+
+def test_collect_fails_fast_on_tiktok_unreachable_downloads(tmp_path):
+    from workflow.unattended.collect import Candidate, collect_footage
+
+    def runner(prompt, *, command, cwd, events_path, timeout):
+        last = Path(command[command.index("-o") + 1])
+        payload = {
+            "keywords": ["licuadora"],
+            "candidates": [
+                {"url": f"https://www.tiktok.com/@c{i}/video/{10000000000 + i}"} for i in range(6)
+            ],
+        }
+        last.write_text(json.dumps(payload), encoding="utf-8")
+        events_path.write_text("", encoding="utf-8")
+        return 0
+
+    def downloader(cand: Candidate, raw_dir: Path, *, ffmpeg: str):
+        cand.status = "download_failed"
+        cand.failure_reason = (
+            "TikTok 不可达（访问受限）。yt-dlp: ERROR: [TikTok] Unable to extract webpage video data。"
+            "处理：请把 Clash 切全局"
+        )
+
+    result = collect_footage(
+        REQ,
+        tmp_path,
+        discovery_runner=runner,
+        downloader=downloader,
+        log=lambda _m: None,
+        screen=False,
+        discover_rounds=2,
+        discover_attempts=1,
+        skip_discovery_if_seeds=True,
+    )
+    assert not result.ok
+    assert "TikTok 不可达" in result.reason
+    assert "停止空转" in result.reason
+    # Should not have burned a second discovery round after network block.
+    assert result.timings.get("discovery_calls", 0) <= 1
+
+
+def test_discovery_admits_no_search_detection():
+    from workflow.unattended.collect import discovery_admits_no_search
+
+    assert discovery_admits_no_search("本次会话没有可用的网页搜索工具，无法检索并核实 TikTok 链接")
+    assert not discovery_admits_no_search('{"candidates":[{"url":"https://www.tiktok.com/@a/video/1"}]}')
+
+
+def test_discover_prompt_forbids_inventing_urls_without_web_search():
+    from workflow.unattended.collect import render_discover_prompt
+
+    prompt = render_discover_prompt(REQ, max_candidates=10)
+    assert "无 web_search" in prompt or "没有可用的 web_search" in prompt
+    assert "不要编造" in prompt
+
 def test_used_ledger_parallel_and_corrupt(tmp_path):
     import threading
     from workflow.unattended.discover_speed import UsedFootageLedger
