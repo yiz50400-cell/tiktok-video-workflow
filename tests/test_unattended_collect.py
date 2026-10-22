@@ -16,8 +16,10 @@ from workflow.unattended.collect import (
     parse_probe,
     render_discover_prompt,
     resolve_ffmpeg,
+    search_markets_for_round,
 )
 from workflow.unattended.discover_speed import (
+    SUPPORTED_COLLECTION_MARKETS,
     count_reconnects,
     infer_form_hints,
     load_seed_candidates,
@@ -147,8 +149,11 @@ def test_collect_footage_accepts_vertical_tiktok_clips(tmp_path):
 
 
 def test_collect_footage_fails_fast_without_enough_candidates(tmp_path):
-    result = collect_footage(REQ, tmp_path, discovery_runner=_fake_discovery(2),
-                             downloader=_fake_downloader(), log=lambda _m: None, screen=False)
+    # discover_rounds=1 keeps the hard fail-fast (no all-region expand).
+    result = collect_footage(
+        REQ, tmp_path, discovery_runner=_fake_discovery(2),
+        downloader=_fake_downloader(), log=lambda _m: None, screen=False, discover_rounds=1,
+    )
     assert not result.ok and "≥3" in result.reason
     assert result.clips == []
 
@@ -561,6 +566,8 @@ def test_render_discover_prompt_embeds_form_hints_and_search_budget():
     assert "形态与检索预算" in prompt
     assert "BlendJet" in prompt or "portable blender" in prompt
     assert "licuadora" in prompt.casefold() or "便携" in prompt
+    assert "交付市场" in prompt
+    assert "优先交付市场" in prompt
 
 
 def test_text_suggests_wrong_form_for_countertop_evidence():
@@ -896,3 +903,101 @@ def test_review_issues_need_new_footage_markers():
     assert review_issues_need_new_footage(["开头镜头有原片烧录文字"])
     assert review_issues_need_new_footage(["第2镜头不是同款商品（眉笔）"])
     assert not review_issues_need_new_footage(["结尾CTA镜头是纯生活方式画面，看不清商品"])
+
+
+def test_search_markets_for_round_task_then_expand():
+    assert search_markets_for_round("MX", round_num=1) == ["MX"]
+    assert search_markets_for_round("BR", round_num=1) == ["BR"]
+    assert search_markets_for_round("MX", round_num=2) == list(SUPPORTED_COLLECTION_MARKETS)
+    assert search_markets_for_round("BR", round_num=2)[0] == "BR"
+    assert set(search_markets_for_round("PH", round_num=3, expand_all=True)) == set(SUPPORTED_COLLECTION_MARKETS)
+
+
+def test_render_discover_prompt_all_regions_scope():
+    prompt = render_discover_prompt(
+        {"product": "护手霜", "market": "MX", "style": "种草", "notes": ""},
+        max_candidates=12, max_searches=5,
+        search_markets=["MX", "BR", "ID", "PH"],
+    )
+    assert "{{" not in prompt
+    assert "全区扩采" in prompt
+    assert "BR" in prompt and "ID" in prompt and "PH" in prompt
+    assert "交付市场仍是 **MX**" in prompt or "交付市场仍是 **MX**" in prompt.replace(" ", "")
+    assert "不一致也可以入库" in prompt
+    # expanded scope bumps search budget by 2
+    assert "最多 7 次 web_search" in prompt
+
+
+def test_seed_cache_merges_cross_market(tmp_path):
+    mx = {"product": "护手霜", "market": "MX"}
+    br = {"product": "护手霜", "market": "BR"}
+    save_seed_candidates(
+        tmp_path, mx,
+        candidates=[{"url": "https://www.tiktok.com/@mx/video/11111111111"}],
+    )
+    save_seed_candidates(
+        tmp_path, br,
+        candidates=[{"url": "https://www.tiktok.com/@br/video/22222222222"}],
+    )
+    only_mx = load_seed_candidates(tmp_path, mx, cross_market=False)
+    assert [c["url"] for c in only_mx] == ["https://www.tiktok.com/@mx/video/11111111111"]
+    merged = load_seed_candidates(tmp_path, mx, cross_market=True)
+    urls = {c["url"] for c in merged}
+    assert "https://www.tiktok.com/@mx/video/11111111111" in urls
+    assert "https://www.tiktok.com/@br/video/22222222222" in urls
+
+
+def test_collect_expands_markets_on_round_two(tmp_path):
+    """Round 1 stays on task market; round 2 prompt must expand to all four."""
+    from workflow.unattended.vision import ScreenOutcome
+
+    req = {"product": "护手霜", "market": "MX", "style": "TikTok种草", "count": 1, "title": "t"}
+    prompts: list[str] = []
+    accepted = {"n": 0}
+    urls_r1 = [f"https://www.tiktok.com/@a/video/{30000000000 + i}" for i in range(1)]
+    urls_r2 = [f"https://www.tiktok.com/@b/video/{40000000000 + i}" for i in range(4)]
+
+    def runner(prompt, **kwargs):
+        prompts.append(prompt)
+        last = Path(kwargs["command"][kwargs["command"].index("-o") + 1])
+        if len(prompts) == 1:
+            payload = {"keywords": ["crema"], "candidates": [{"url": u} for u in urls_r1]}
+        else:
+            payload = {"keywords": ["crema", "hand cream"], "candidates": [{"url": u} for u in urls_r2]}
+        last.write_text(__import__("json").dumps(payload), encoding="utf-8")
+        return 0
+
+    def downloader(cand, raw_dir, ffmpeg):
+        dest = Path(raw_dir) / f"{cand.video_id}.mp4"
+        _make_video(dest, seconds=6)
+        cand.status = "downloaded"
+        cand.raw_path = str(dest)
+
+    def screener(request, clips, **_kwargs):
+        per = {
+            str(c["clip_id"]): {
+                "accepted": True,
+                "reason": "ok",
+                "usable_segments": [{"start_s": 0, "end_s": 5, "product_prominent": True}],
+            }
+            for c in clips
+        }
+        accepted["n"] += len(clips)
+        # Only declare screen ok once floors are met so collect continues into expand round.
+        ok = accepted["n"] >= 3
+        return ScreenOutcome(ok, "ok" if ok else "不足", "护手霜", per)
+
+    result = collect_footage(
+        req, tmp_path / "work",
+        discovery_runner=runner, downloader=downloader, screener=screener,
+        discover_rounds=2, discover_attempts=1, min_clips=3, max_clips=6, max_candidates=6,
+        skip_discovery_if_seeds=False, avoid_used=False, seed_dir=None,
+        log=lambda _m: None, screen=True,
+    )
+    assert len(prompts) >= 2
+    assert "优先交付市场" in prompts[0] or "优先在交付市场" in prompts[0]
+    assert "全区扩采" in prompts[1]
+    assert "BR" in prompts[1] and "ID" in prompts[1]
+    assert result.timings.get("discovery_scope") == "all_regions"
+    assert result.ok
+

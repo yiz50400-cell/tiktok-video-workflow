@@ -201,10 +201,10 @@ def seed_path(seed_dir: Path, request: dict[str, Any]) -> Path:
     return Path(seed_dir) / f"{product_slug(str(request.get('product') or ''), str(request.get('market') or 'XX'))}.json"
 
 
-def load_seed_candidates(seed_dir: Path | None, request: dict[str, Any]) -> list[dict[str, Any]]:
-    if not seed_dir:
-        return []
-    path = seed_path(seed_dir, request)
+SUPPORTED_COLLECTION_MARKETS = ("MX", "BR", "ID", "PH")
+
+
+def _seed_items_from_path(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     try:
@@ -219,8 +219,44 @@ def load_seed_candidates(seed_dir: Path | None, request: dict[str, Any]) -> list
         if isinstance(item, str):
             item = {"url": item}
         if isinstance(item, dict) and item.get("url"):
-            out.append(dict(item))
+            row = dict(item)
+            if payload.get("market") and "source_market" not in row:
+                row["source_market"] = payload.get("market")
+            out.append(row)
     return out
+
+
+def load_seed_candidates(
+    seed_dir: Path | None,
+    request: dict[str, Any],
+    *,
+    cross_market: bool = False,
+) -> list[dict[str, Any]]:
+    """Load cached TikTok URLs for this product.
+
+    When ``cross_market`` is True, also merge seeds saved under other supported
+    markets for the same product name (IZ: maximize unique same-product clips).
+    """
+    if not seed_dir:
+        return []
+    seed_dir = Path(seed_dir)
+    primary = _seed_items_from_path(seed_path(seed_dir, request))
+    if not cross_market:
+        return primary
+    product = str(request.get("product") or "")
+    task_market = str(request.get("market") or "MX")
+    seen = {str(item.get("url") or "") for item in primary}
+    merged = list(primary)
+    for market in SUPPORTED_COLLECTION_MARKETS:
+        if market == task_market:
+            continue
+        for item in _seed_items_from_path(seed_path(seed_dir, {"product": product, "market": market})):
+            url = str(item.get("url") or "")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            merged.append(item)
+    return merged
 
 
 def save_seed_candidates(
@@ -236,7 +272,7 @@ def save_seed_candidates(
     seed_dir = Path(seed_dir)
     seed_dir.mkdir(parents=True, exist_ok=True)
     path = seed_path(seed_dir, request)
-    existing = load_seed_candidates(seed_dir, request)
+    existing = load_seed_candidates(seed_dir, request, cross_market=False)
     by_url: dict[str, dict[str, Any]] = {}
     for item in existing + list(candidates):
         url = str(item.get("url") or "")

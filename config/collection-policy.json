@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-09.2",
+  "version": "2026-10-22.1",
   "purpose": "TikTok 爆款商品带货视频采集与结构研究",
   "default_market": "MX",
   "ad_style_required": true,
@@ -143,5 +143,12 @@
       "external_paid_provider_configured": false
     },
     "standalone_entry": "scripts/repair_video.py"
-  }
+  },
+  "footage_markets": [
+    "MX",
+    "BR",
+    "ID",
+    "PH"
+  ],
+  "footage_market_policy": "task_market_first_then_expand_all_supported; delivery_voiceover_captions_cta_follow_task_market; screen_language_mismatch_allowed_per_IZ_2026-10-22"
 }

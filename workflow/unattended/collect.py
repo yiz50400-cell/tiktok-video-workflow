@@ -1,7 +1,8 @@
 """Unattended TikTok footage collection (stage A/B of ``once --produce``).
 
 A. discovery: Codex (gpt-5.6-sol, read-only sandbox, live web search, ChatCut MCP
-   disabled) proposes real TikTok creator videos for the product/market.
+   disabled) proposes real TikTok creator videos. Round 1 prefers the task market;
+   later rounds expand across MX/BR/ID/PH. Delivery VO/captions stay on task market.
    Speed path: form-factor hints in round-1 queries, search-budget in the prompt,
    seed-cache reuse, reconnect abort, parallel downloads (see discover_speed.py).
 B. retrieval + validation (deterministic Python): yt-dlp download, ffmpeg probe,
@@ -29,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .discover_speed import (
     FormHints,
+    SUPPORTED_COLLECTION_MARKETS,
     count_reconnects,
     infer_form_hints,
     load_seed_candidates,
@@ -54,6 +56,60 @@ MARKET_LANGUAGE = {
     "ID": ("id-ID", "Bahasa Indonesia"),
     "PH": ("en-PH", "English (Philippines; light Taglish OK)"),
 }
+
+
+def search_markets_for_round(task_market: str, *, round_num: int, expand_all: bool = False) -> list[str]:
+    """Approach B: task market first; expand to MX/BR/ID/PH when later rounds or forced.
+
+    Delivery voiceover/captions stay on ``task_market``; this only widens footage discovery.
+    """
+    primary = str(task_market or "MX").upper()
+    if primary not in SUPPORTED_COLLECTION_MARKETS:
+        primary = "MX"
+    if expand_all or int(round_num) >= 2:
+        rest = [m for m in SUPPORTED_COLLECTION_MARKETS if m != primary]
+        return [primary, *rest]
+    return [primary]
+
+
+def render_search_scope_block(task_market: str, search_markets: list[str]) -> tuple[str, str, str]:
+    """Return (scope_block, priority_line, language_hint) for the discover prompt."""
+    task_market = str(task_market or "MX").upper()
+    markets = [m for m in search_markets if m in SUPPORTED_COLLECTION_MARKETS] or [task_market]
+    expanded = len(markets) > 1
+    lang_bits = []
+    for code in markets:
+        locale, language = MARKET_LANGUAGE.get(code, ("en", "English"))
+        lang_bits.append(f"{code}={language}（{locale}）")
+    market_list = " / ".join(markets)
+    nl = chr(10)
+    if expanded:
+        block = (
+            "## 素材检索范围（全区扩采）" + nl
+            + f"- 本轮在支持市场 **{market_list}** 检索同款商品竖屏种草/演示视频。" + nl
+            + f"- 各市场语言：{'; '.join(lang_bits)}；另可辅以英语通吃查询。" + nl
+            + f"- 交付市场仍是 **{task_market}**：口播/字幕/CTA 语言后续制作按交付市场走；"
+            + "本步只最大化独特可用的同款画面素材。" + nl
+            + "- 画面语言、包装文案与交付市场不一致也可以入库（客户已确认可接受）。" + nl
+        )
+        priority = (
+            f"在 {market_list} **同等优先**找高互动同款演示；不要只锁在交付市场 {task_market}。"
+        )
+        hint = "各检索市场语言 + 英语 + hashtag 各试；四市场轮转，避免只搜交付市场。"
+    else:
+        lang_name = MARKET_LANGUAGE.get(task_market, ("en", "English"))[1]
+        block = (
+            "## 素材检索范围（优先交付市场）" + nl
+            + f"- 本轮优先在交付市场 **{task_market}**（{lang_name}）检索。" + nl
+            + "- 同品类其他支持市场（MX/BR/ID/PH）的高互动同款镜头也可收入，用于补足干净商品操作画面。" + nl
+            + f"- 若本轮合格素材不够，下一轮会自动扩到全区四市场；口播/字幕仍按交付市场 {task_market}。" + nl
+        )
+        priority = (
+            f"优先目标市场语言与市场（{task_market}）的高互动视频，其次同品类其他支持市场的高互动视频，"
+            "用于补足干净的商品操作镜头。"
+        )
+        hint = "目标语言 + 英语 + hashtag 各试一轮即可。"
+    return block, priority, hint
 
 
 def _utc_now() -> str:
@@ -280,15 +336,20 @@ def render_discover_prompt(
     template_path: Path | None = None,
     form_hints: FormHints | None = None,
     max_searches: int = 5,
+    search_markets: list[str] | None = None,
 ) -> str:
-    market = request.get("market") or "MX"
+    market = str(request.get("market") or "MX").upper()
     locale, language = MARKET_LANGUAGE.get(market, ("en", "English"))
+    markets = search_markets or search_markets_for_round(market, round_num=1)
+    scope_block, priority_line, language_hint = render_search_scope_block(market, markets)
     template = (template_path or DISCOVER_TEMPLATE).read_text(encoding="utf-8")
     hints = form_hints or infer_form_hints(
         str(request.get("product") or ""),
         str(request.get("notes") or ""),
         str(request.get("style") or ""),
     )
+    # Expanded rounds get a slightly higher search budget across languages.
+    searches = max_searches + (2 if len(markets) > 1 else 0)
     return (
         template.replace("{{product}}", str(request.get("product") or ""))
         .replace("{{market}}", market)
@@ -297,7 +358,10 @@ def render_discover_prompt(
         .replace("{{style}}", str(request.get("style") or ""))
         .replace("{{notes}}", str(request.get("notes") or ""))
         .replace("{{max_candidates}}", str(max_candidates))
-        .replace("{{form_hints}}", hints.prompt_block(max_searches=max_searches, min_urls=max(8, min(max_candidates, 10))))
+        .replace("{{search_scope_block}}", scope_block)
+        .replace("{{search_priority_line}}", priority_line)
+        .replace("{{search_language_hint}}", language_hint)
+        .replace("{{form_hints}}", hints.prompt_block(max_searches=searches, min_urls=max(8, min(max_candidates, 10))))
     )
 
 
@@ -785,7 +849,7 @@ def collect_footage(
         return clips, bool(outcome.ok)
 
     # --- 0. Seed cache: reuse previously accepted URLs before paying for Codex ---
-    seed_rows = load_seed_candidates(seed_dir, request) if seed_dir else []
+    seed_rows = load_seed_candidates(seed_dir, request, cross_market=True) if seed_dir else []
     if seed_rows:
         started = time.time()
         seed_cands: list[Candidate] = []
@@ -824,9 +888,15 @@ def collect_footage(
 
         tag = "" if rnd == 1 else f".round{rnd}"
         # --- A. discovery ---------------------------------------------------
+        # Approach B: round 1 = task market; later rounds expand to MX/BR/ID/PH.
+        markets = search_markets_for_round(str(request.get("market") or "MX"), round_num=rnd)
+        timings["discovery_scope"] = "all_regions" if len(markets) > 1 else "task_market"
+        timings[f"discovery_markets_r{rnd}"] = float(len(markets))
+        log(f"采集-检索第 {rnd} 轮范围：{'/'.join(markets)}（交付市场={request.get('market') or 'MX'}，口播语言不变）")
         started = time.time()
         prompt = render_discover_prompt(
-            request, max_candidates=max_candidates, form_hints=form_hints, max_searches=max_searches,
+            request, max_candidates=max_candidates, form_hints=form_hints,
+            max_searches=max_searches, search_markets=markets,
         )
         if rnd > 1:
             prompt += render_supplement(seen, rejections, state["definition"] or form_hints.definition, rnd)
@@ -889,12 +959,22 @@ def collect_footage(
             f"关键词 {keywords[:6]}，profile={form_hints.profile}"
         )
         if rnd == 1 and not kept and len(candidates) < min_clips and not fallback:
-            timings["discovery_calls"] = discovery_calls
-            return finish(
-                False,
-                f"采集-检索只得到 {len(candidates)} 条有效 TikTok 视频 URL（需 ≥{min_clips}），codex exit={rc}",
-                [], all_candidates, keywords,
-            )
+            if discover_rounds > 1:
+                # Keep whatever we got; later rounds expand to all supported markets.
+                log(
+                    f"采集-检索第 1 轮只得到 {len(candidates)} 条有效 URL（需 ≥{min_clips}），"
+                    "先入库再扩到 MX/BR/ID/PH 全区补采"
+                )
+                last_reason = (
+                    f"第 1 轮交付市场检索不足（{len(candidates)} < {min_clips}），准备全区扩采"
+                )
+            else:
+                timings["discovery_calls"] = discovery_calls
+                return finish(
+                    False,
+                    f"采集-检索只得到 {len(candidates)} 条有效 TikTok 视频 URL（需 ≥{min_clips}），codex exit={rc}",
+                    [], all_candidates, keywords,
+                )
         if not candidates:
             last_reason = f"{last_reason}；第 {rnd} 轮补充检索没有新候选"
             continue
@@ -969,11 +1049,12 @@ def screening_sufficient(
 def render_supplement(seen: set[str], rejections: list[str], definition: str, rnd: int) -> str:
     lines = "\n".join(f"- {r}" for r in rejections[-20:]) or "- （无）"
     return (
-        f"\n\n## 补充检索（第 {rnd} 轮）\n"
+        f"\n\n## 补充检索（第 {rnd} 轮 · 全区扩采）\n"
         "上一轮候选下载后经视觉初筛，大部分被淘汰，原因如下（请避开这些类型）：\n"
         f"{lines}\n\n"
         f"形态标准：{definition or '与请求商品同一类型和形态'}\n"
-        "请换更精确的检索词（例如商品形态 + 充电方式/手持/随行/杯身一体，以及目标语言的同义词和 hashtag），"
-        "只返回**画面里明确是该形态**、商品大而清楚、烧录字幕少的视频。\n"
+        "请换更精确的检索词（商品形态 + 充电方式/手持/随行/杯身一体），"
+        "并在 **MX / BR / ID / PH** 各市场语言与英语里找**还没用过的**同款竖屏演示；"
+        "画面语言可与交付市场不一致。只返回画面里明确是该形态、商品大而清楚、烧录字幕少的视频。\n"
         f"以下视频 ID 已经用过，**不要再返回**：{', '.join(sorted(seen))}\n"
     )
