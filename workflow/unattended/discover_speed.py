@@ -107,6 +107,32 @@ _PROFILES: list[dict[str, Any]] = [
         "brand_anchors": ["JISULIFE neck fan", "TORRAS neck fan"],
     },
     {
+        "name": "eye_cream",
+        "match": [
+            "眼霜", "眼精华", "眼部精华", "眼霜霜", "eye cream", "eyecream", "eye gel",
+            "contorno de ojos", "crema para ojos", "crema de ojos", "creme para olhos",
+            "krim mata", "eye moisturizer", "under eye cream",
+        ],
+        "definition": (
+            "眼霜/眼精华：涂抹于眼周的护肤霜/凝胶演示（点涂、按压、淡化黑眼圈/细纹）；"
+            "优先收录真实涂抹/上脸过程，不要求片源必须是超高清棚拍静物。"
+            "排除睫毛膏、眼线、眉笔、口红/唇釉、面霜（全脸）、面膜等其它品类。"
+        ),
+        "prefer_queries": [
+            'tiktok "eye cream" apply under eye review',
+            'tiktok "contorno de ojos" aplicar resena',
+            'tiktok "crema para ojos" rutina',
+            'tiktok "creme para olhos" aplicacao',
+            'site:tikwm.com/video "eye cream" apply',
+            'site:urlebird.com/video "eye cream" under-eye',
+        ],
+        "reject_markers": [
+            "mascara", "eyeliner", "eyebrow pencil", "brow pencil", "lipstick", "lip gloss",
+            "睫毛膏", "眼线", "眉笔", "唇釉", "唇泥", "rimel", "delineador",
+        ],
+        "brand_anchors": [],
+    },
+    {
         "name": "lip_balm",
         "match": [
             "润唇膏", "护唇膏", "唇膏", "唇膜", "lip balm", "lipbalm", "chapstick",

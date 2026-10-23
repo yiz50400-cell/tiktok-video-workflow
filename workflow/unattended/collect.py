@@ -253,8 +253,10 @@ class CollectResult:
     screened_out: list[Clip] = field(default_factory=list)
 
     def manifest(self) -> dict[str, Any]:
+        partial = bool((self.timings or {}).get("partial_pool"))
         return {
             "ok": self.ok,
+            "partial": partial,
             "reason": self.reason,
             "keywords": self.keywords,
             "product_definition": self.product_definition,
@@ -1251,8 +1253,9 @@ def collect_footage(
         return finish(
             True,
             (
-                f"缺素材：目标≥{min_clips} 条互不重复源，已采到可用 {len(kept)} 条；"
-                f"改为部分交付（不做 0 成片失败）。{last_reason}"
+                f"缺素材（部分池，非满额成功）：目标≥{min_clips} 条互不重复源，已采到可用 {len(kept)} 条；"
+                f"仅够部分交付/reused_clip 补位后的 k/N，制作侧不得按满额 {min_clips} 自信进剪。"
+                f"{last_reason}"
             ),
             kept,
             all_candidates,

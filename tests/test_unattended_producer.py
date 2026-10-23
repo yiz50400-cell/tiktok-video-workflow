@@ -426,3 +426,132 @@ def test_pipeline_rejects_background_music():
         _reject_background_music({"background_music": {"path": "/a/bgm.mp3"}})
     with pytest.raises(ValueError):
         _reject_background_music({"sound_effects": [{"description_zh": "欢快背景音乐", "path": "/a/x.mp3"}]})
+
+
+def test_feedback_prompt_recreates_when_no_project(tmp_path):
+    """No project_id → must create_project from scratch, never target missing project."""
+    result = tmp_path / "produce-result.json"
+    result.write_text(json.dumps({"ok": False, "error": "create_project failed"}), encoding="utf-8")
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    prompt = Producer._feedback_prompt(
+        "BASE_PROMPT",
+        ["制作未生成成片文件"],
+        result,
+        exports,
+        "task_abc",
+        "MX",
+        1,
+    )
+    assert "从头新建" in prompt or "create_project" in prompt
+    assert "禁止** create_project" not in prompt and "禁止 create_project" not in prompt
+    assert "BASE_PROMPT" in prompt
+    assert "没有成功创建" in prompt or "无 project_id" in prompt
+
+
+def test_feedback_prompt_keeps_inplace_edit_when_project_exists(tmp_path):
+    result = tmp_path / "produce-result.json"
+    result.write_text(json.dumps({"ok": True, "project_id": "proj-123", "export_paths": []}), encoding="utf-8")
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    prompt = Producer._feedback_prompt(
+        "BASE",
+        ["结尾CTA不清"],
+        result,
+        exports,
+        "task_abc",
+        "MX",
+        1,
+    )
+    assert "proj-123" in prompt
+    assert "禁止" in prompt and "create_project" in prompt
+    assert "同一个工程" in prompt
+
+
+def test_producer_empty_export_fails_fast_no_delivery(tmp_path, monkeypatch):
+    """Production + thin pool: Codex exit 0 but no mp4 → clear fail, delivery stays 0."""
+    from workflow.unattended.collect import Clip
+
+    inbox = Inbox(tmp_path / "data")
+    (tmp_path / "a.mp4").write_bytes(b"x" * 4000)
+    (tmp_path / "b.mp4").write_bytes(b"x" * 4000)
+    segs = [{"start_s": 0, "end_s": 20, "product_prominent": True}]
+
+    def _clip(cid, name):
+        return Clip(
+            clip_id=cid,
+            path=str(tmp_path / name),
+            source_url=f"https://www.tiktok.com/@a/video/{cid}",
+            account="a",
+            title="eye cream",
+            duration=60.0,
+            width=1080,
+            height=1920,
+            keyword_hit=True,
+            visible_metrics={},
+            sheet_path="",
+            sheet_times=[],
+            usable_segments=segs,
+        )
+
+    class FakeCollection:
+        ok = True
+        reason = "缺素材（部分池，非满额成功）：已采到可用 2 条"
+        clips = [_clip("111", "a.mp4"), _clip("222", "b.mp4")]
+        candidates = []
+        keywords = ["eye cream"]
+        timings = {"partial_pool": 1.0, "partial_kept": 2.0}
+        product_definition = "眼霜"
+        screened_out = []
+        manifest_path = None
+
+    def fake_runner(prompt, **kwargs):
+        task_dir = inbox.task_dir("task_empty_export")
+        (task_dir / "produce-result.json").write_text(
+            json.dumps({"ok": False, "error": "create_project failed"}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout="ok", stderr="")
+
+    class Gate:
+        ok = True
+        reason = "ready"
+        details = {}
+
+    monkeypatch.setattr(
+        "workflow.unattended.producer.verify_codex_chatcut_mcp_ready",
+        lambda **kwargs: Gate(),
+    )
+    producer = Producer(
+        inbox,
+        probe=lambda: {"healthy": True},
+        codex_runner=fake_runner,
+        options=ProduceOptions(
+            mode="production",
+            project_root=tmp_path,
+            chatcut_agent_log=None,
+            collector=lambda *a, **k: FakeCollection(),
+            review_retries=2,
+        ),
+        log=lambda _m: None,
+    )
+    result = producer.produce(
+        task_id="task_empty_export",
+        workflow_job_id="job_empty",
+        request=valid_payload(task_id="task_empty_export", product="眼霜", count=10),
+    )
+    assert result.status == "produce_failed"
+    assert result.delivery_paths == []
+    assert "制作未生成成片文件" in (result.reason or "") or "无可用导出" in (result.reason or "") or "exports=0" in (result.reason or "")
+    # Must not claim successful partial delivery.
+    assert "已交付 1/10" not in (result.reason or "")
+
+
+def test_eye_cream_form_hints_prefer_apply():
+    from workflow.unattended.discover_speed import infer_form_hints, text_suggests_wrong_form
+
+    h = infer_form_hints("墨西哥眼霜", "", "种草")
+    assert h.profile == "eye_cream"
+    assert any("apply" in q or "aplicar" in q for q in h.prefer_queries)
+    assert text_suggests_wrong_form("tiktok mascara review", h)
+    assert text_suggests_wrong_form("contorno de ojos apply under eye", h) is None

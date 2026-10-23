@@ -545,24 +545,47 @@ class Producer:
             self._batch_partial_note = ""
             partition = partition_clips_disjoint(clips, batch_n)
             if not partition.ok:
-                # One refill attempt: raise collect floors and avoid current ids via ledger-style avoid in collect.
-                self._log(f"批次素材不足，准备补采：{partition.reason}")
+                # Prefer partial on the current pool first. Under TikTok 429, refill often
+                # yields nothing and only delays the k/N path that already has usable clips.
+                self._log(f"素材池不够同批互斥分配：{partition.reason}")
                 stages["batch_partition_initial"] = {
                     "ok": False, "reason": partition.reason,
                     "unique": partition.unique_count, "need": partition.need,
                 }
-                refill = self._run_collector(request, task_dir, force_min_clips=partition.need)
-                stages["collect_refill"] = {
-                    "ok": refill.ok, "reason": refill.reason,
-                    "clips": len(refill.clips), "candidates": len(refill.candidates),
-                }
-                # Prefer whatever pool we have (refill or prior) for partial deliver.
-                if refill.ok or refill.clips:
-                    collection = refill if (refill.ok or len(refill.clips) >= len(collection.clips)) else collection
-                    clips = [_asdict(c) for c in collection.clips]
-                    partition = partition_clips_disjoint(clips, batch_n)
-                if not partition.ok:
-                    partition = partition_clips_disjoint(clips, batch_n, allow_partial=True)
+                partial_now = partition_clips_disjoint(clips, batch_n, allow_partial=True)
+                timings = getattr(collection, "timings", None) or {}
+                skip_refill = bool(
+                    timings.get("partial_pool")
+                    or timings.get("discovery_rate_limited")
+                    or (
+                        partial_now.ok
+                        and partial_now.bundles
+                        and partition.unique_count <= max(4, requested_n)
+                    )
+                )
+                if skip_refill and partial_now.ok and partial_now.bundles:
+                    partition = partial_now
+                    stages["collect_refill"] = {
+                        "ok": False,
+                        "skipped": True,
+                        "reason": "池已偏薄或已限流，跳过补采，直接部分交付",
+                    }
+                else:
+                    self._log("尝试补采以提高可交付条数")
+                    refill = self._run_collector(request, task_dir, force_min_clips=partition.need)
+                    stages["collect_refill"] = {
+                        "ok": refill.ok, "reason": refill.reason,
+                        "clips": len(refill.clips), "candidates": len(refill.candidates),
+                    }
+                    # Prefer whatever pool we have (refill or prior) for partial deliver.
+                    if refill.ok or refill.clips:
+                        collection = refill if (refill.ok or len(refill.clips) >= len(collection.clips)) else collection
+                        clips = [_asdict(c) for c in collection.clips]
+                        partition = partition_clips_disjoint(clips, batch_n)
+                    if not partition.ok:
+                        partition = partition_clips_disjoint(clips, batch_n, allow_partial=True)
+                    if (not partition.ok or not partition.bundles) and partial_now.ok and partial_now.bundles:
+                        partition = partial_now
                 if not partition.ok or not partition.bundles:
                     return self._fail(
                         task_id, workflow_job_id,
@@ -639,8 +662,23 @@ class Producer:
             self._product_definition = extra["product_definition"]
             self._cta = extra["cta_example"]
             (task_dir / "work").mkdir(parents=True, exist_ok=True)
+        # For partial deliver, never leave request_json.count at the original N —
+        # Codex must see the reduced k so it does not chase N exports with a thin pool.
+        prompt_request = dict(request)
+        partial_note = getattr(self, "_batch_partial_note", "") or ""
+        deliver_n = int(getattr(self, "_batch_count", 0) or prompt_request.get("count") or 1)
+        requested_for_prompt = int(
+            getattr(self, "_batch_requested_count", 0) or prompt_request.get("count") or deliver_n
+        )
+        if deliver_n and requested_for_prompt and deliver_n < requested_for_prompt:
+            prompt_request["count"] = deliver_n
+            prompt_request["requested_count"] = requested_for_prompt
+            prompt_request["partial_delivery"] = True
+            prompt_request["partial_note"] = (
+                partial_note or f"缺素材，已交付计划 {deliver_n}/{requested_for_prompt}"
+            )
         prompt = render_produce_prompt(
-            request=request,
+            request=prompt_request,
             task_id=task_id,
             workflow_job_id=workflow_job_id,
             exports_dir=exports_dir,
@@ -650,6 +688,26 @@ class Producer:
             extra=extra,
         )
         (logs_dir / "codex-prompt.md").write_text(prompt, encoding="utf-8")
+        # Thin pool: remind Codex this is partial k/N and create_project is mandatory.
+        if getattr(self, "_batch_partial_note", "") or (
+            int(getattr(self, "_batch_requested_count", 0) or 0)
+            > int(getattr(self, "_batch_count", 0) or 0)
+            > 0
+        ):
+            note = getattr(self, "_batch_partial_note", "") or "素材不足，按已分配条数制作"
+            thin = "\n\n".join(
+                [
+                    "",
+                    "## 缺素材部分交付（系统已降级）",
+                    f"- {note}",
+                    "- 只制作 `count` / `export_paths_json` 列出的条数，**不要**按原 request 里更大的目标硬凑。",
+                    "- 首轮必须 `create_project` 成功拿到 project_id；若 create_project 失败，结果写 ok=false 并停止，不要假装工程已存在去 target_project。",
+                    "- 若本条 bundle 只有 2 个 clip_id：两源都要用到，可在各自 usable_segments 内换切点；禁止单源铺满，但不要因「反乒乓」规则而放弃出片。",
+                    "",
+                ]
+            )
+            prompt = prompt + thin
+            (logs_dir / "codex-prompt.md").write_text(prompt, encoding="utf-8")
         produce_started = time.time()
         run_started = datetime.now(timezone.utc)
         max_attempts = 1 + (max(0, int(self.options.review_retries)) if production else 0)
@@ -692,6 +750,32 @@ class Producer:
                 stages["produce_mcp_retry" + suffix] = {"seconds": round(time.time() - t1, 1), "returncode": completed.returncode}
 
             export_paths = self._collect_exports(exports_dir, result_path)
+            # Empty export / missing result: fail fast. Retrying ChatCut with the same
+            # thin pool just burns attempts and still leaves delivery at 0/N.
+            if production and completed is not None and completed.returncode == 0:
+                missing_result = not result_path.is_file()
+                if missing_result or not export_paths:
+                    partial_note = getattr(self, "_batch_partial_note", "") or ""
+                    requested_n = int(getattr(self, "_batch_requested_count", 0) or 0)
+                    planned = int(getattr(self, "_batch_count", 0) or 0)
+                    plan_bit = (
+                        f"缺素材计划交付 {planned}/{requested_n}，"
+                        if planned and requested_n and planned < requested_n
+                        else (f"{partial_note}，" if partial_note else "")
+                    )
+                    detail = "结果文件缺失" if missing_result else f"exports=0（目录 {exports_dir} 无成片）"
+                    return self._fail(
+                        task_id,
+                        workflow_job_id,
+                        (
+                            f"{plan_bit}制作未生成成片文件（{detail}），交付检查失败；"
+                            "停止空转重试。请确认 ChatCut 已开、MCP 可用后重投；"
+                            "若仍只有极少素材，先改善 TikTok 出口/限流再采。"
+                        ),
+                        delivery_paths=[],
+                        audit_path=audit_path,
+                        codex_returncode=completed.returncode,
+                    )
             if self.options.forbid_inapp_agent:
                 inapp_runs = detect_inapp_agent_runs(self.options.chatcut_agent_log, run_started)
                 if inapp_runs:
@@ -732,6 +816,27 @@ class Producer:
             if not verdict.ok:
                 issues = [verdict.reason]
                 self._log(f"成片校验未通过（第 {attempt} 次）：{verdict.reason}")
+                # No file / zero exports cannot be fixed by re-edit retries.
+                hard = (
+                    "结果文件缺失" in verdict.reason
+                    or "实际 0" in verdict.reason
+                    or ("应恰好导出" in verdict.reason and len(export_paths) == 0)
+                )
+                if hard:
+                    partial_note = getattr(self, "_batch_partial_note", "") or ""
+                    requested_n = int(getattr(self, "_batch_requested_count", 0) or 0)
+                    planned = int(getattr(self, "_batch_count", 0) or 0)
+                    plan_bit = (
+                        f"缺素材计划交付 {planned}/{requested_n}，"
+                        if planned and requested_n and planned < requested_n
+                        else (f"{partial_note}，" if partial_note else "")
+                    )
+                    return self._fail(
+                        task_id, workflow_job_id,
+                        f"{plan_bit}成片校验失败且无可用导出，停止重试：{verdict.reason}",
+                        delivery_paths=[], audit_path=audit_path,
+                        codex_returncode=completed.returncode,
+                    )
             else:
                 self._log(verdict.reason)
                 t3 = time.time()
@@ -815,9 +920,17 @@ class Producer:
                 prior=f"codex exit={completed.returncode}, exports={len(export_paths)}",
             )
 
+        partial_note = getattr(self, "_batch_partial_note", "") or ""
+        requested_n = int(getattr(self, "_batch_requested_count", 0) or 0)
+        planned = int(getattr(self, "_batch_count", 0) or 0)
+        plan_bit = (
+            f"缺素材计划交付 {planned}/{requested_n}，"
+            if planned and requested_n and planned < requested_n
+            else (f"{partial_note}，" if partial_note else "")
+        )
         reason = (
-            f"ChatCut/Codex 制作失败（exit={completed.returncode}，exports={len(export_paths)}）；"
-            "未开启 --allow-ffmpeg-fallback"
+            f"{plan_bit}ChatCut/Codex 制作失败（exit={completed.returncode}，exports={len(export_paths)}）；"
+            "未开启 --allow-ffmpeg-fallback。交付仍为 0 个成片，非整单进度。"
         )
         return self._fail(
             task_id,
@@ -887,22 +1000,54 @@ class Producer:
         return issues, payloads if len(payloads) > 1 else (payloads[0] if payloads else None)
 
     @staticmethod
+    def _result_has_project(previous: dict[str, Any]) -> bool:
+        """True when a prior produce attempt actually recorded a ChatCut project id."""
+        if not isinstance(previous, dict):
+            return False
+        if previous.get("project_id"):
+            return True
+        for video in previous.get("videos") or []:
+            if isinstance(video, dict) and video.get("project_id"):
+                return True
+        return False
+
+    @staticmethod
     def _feedback_prompt(base_prompt: str, issues: list[str], result_path: Path, exports_dir: Path, task_id: str,
                          market: str, attempt: int) -> str:
         try:
             previous = json.loads(result_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             previous = {}
+        if not isinstance(previous, dict):
+            previous = {}
         new_export = exports_dir / f"{market}-{task_id}-chatcut-r{attempt}.mp4"
-        project = previous.get("project_id") or "（上次结果未给出，先 list_projects 按 project_name 查找）"
+        has_project = Producer._result_has_project(previous)
+        issue_blob = "\n- ".join(issues)
+        prev_json = json.dumps(previous, ensure_ascii=False, indent=2)[:6000]
+        if not has_project:
+            # First attempt never created a ChatCut project (create_project failed / no result).
+            # Never instruct target_project on a missing id — that yields Project Not Found and 0 exports.
+            return (
+                f"## 自动重做（第 {attempt + 1} 次剪辑）\n"
+                f"上一次**没有成功创建 ChatCut 工程**（无 project_id / 无导出），不能按「改旧工程」重试。"
+                f"问题：\n- {issue_blob}\n\n"
+                "请**从头新建**：\n"
+                "1. `list_projects` 确认连通；\n"
+                "2. **必须** `create_project`（按原任务 project_name）；成功后再 `target_project`；\n"
+                "3. 不要假设旧工程存在，不要对空 UUID 调 target_project；\n"
+                f"4. 导出到 `{new_export}`，并重写结果 JSON（含真实 project_id 与 export_paths）。\n\n"
+                f"上一次的结果（可能为空/失败）：\n```json\n{prev_json}\n```\n\n"
+                "以下是原始任务说明（规则全部仍然有效）：\n\n" + base_prompt
+            )
+        project = previous.get("project_id") or "（见 videos[].project_id）"
         return (
             f"## 自动重剪（第 {attempt + 1} 次剪辑）\n"
-            f"上一次成片在导出后自动复核**未通过**，不会交付。问题：\n- " + "\n- ".join(issues) + "\n\n"
+            f"上一次成片在导出后自动复核**未通过**，不会交付。问题：\n- {issue_blob}\n\n"
             f"请在**同一个工程** `{project}` 上做**最小修改**（先 target_project 打开已有工程；**禁止** create_project 新建、**禁止**删除工程、**禁止**推倒重建整条时间线）："
             "只替换/调整有问题的镜头（换成其它 usable_segments 内的画面，开头和结尾 CTA 用 product_prominent 片段），"
             "复用已有轨道/MG/字幕资源；保持镜头首尾相接、MG 字幕 CUTS 与镜头起点一致（镜头时长变了才重写 captions.jsx 并重新 push_asset、替换 V2 的 MG item）。\n"
             f"导出到新路径 `{new_export}`（不要覆盖旧文件），并重写结果文件（export_paths 只写新路径，shots 按新时间线更新）。\n\n"
-            f"上一次的结果：\n```json\n{json.dumps(previous, ensure_ascii=False, indent=2)[:6000]}\n```\n\n"
+            f"上一次的结果：\n```json\n{prev_json}\n```\n\n"
             "以下是原始任务说明（规则全部仍然有效）：\n\n" + base_prompt
         )
 
