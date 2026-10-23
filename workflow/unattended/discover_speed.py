@@ -54,6 +54,22 @@ class FormHints:
         )
 
 
+# Beauty/skincare: round-1 discovery may start across MX/BR/ID/PH (VO/captions stay on
+# task market). Squeeze-web only — still Codex web_search → yt-dlp, not App in-app search.
+BEAUTY_CROSS_MARKET_PROFILES = frozenset({"eye_cream", "lip_balm"})
+
+
+def discover_min_urls(max_candidates: int) -> int:
+    """Early-stop floor for Codex web_search; scales with batch candidate budget.
+
+    Pre-squeeze hard-cap at 10 let count=10 batches stop after ~10 URLs despite needing
+    ~20 screened clips. Floor stays 8 for tiny jobs; soft cap 20 so we do not chase forever.
+    Expected gain vs post-3ec1e06 baseline: ~+20–50% unique URLs (same well — not App breadth).
+    """
+    n = max(1, int(max_candidates))
+    return max(8, min(20, max(10, n // 6 + 8)))
+
+
 # Ordered profiles: first match wins. Keep patterns lowercase-fold friendly.
 _PROFILES: list[dict[str, Any]] = [
     {
@@ -111,7 +127,8 @@ _PROFILES: list[dict[str, Any]] = [
         "match": [
             "眼霜", "眼精华", "眼部精华", "眼霜霜", "eye cream", "eyecream", "eye gel",
             "contorno de ojos", "crema para ojos", "crema de ojos", "creme para olhos",
-            "krim mata", "eye moisturizer", "under eye cream",
+            "krim mata", "krim pelembab mata", "eye moisturizer", "under eye cream",
+            "under-eye cream", "ojeras crema", "olheiras creme",
         ],
         "definition": (
             "眼霜/眼精华：涂抹于眼周的护肤霜/凝胶演示（点涂、按压、淡化黑眼圈/细纹）；"
@@ -119,12 +136,28 @@ _PROFILES: list[dict[str, Any]] = [
             "排除睫毛膏、眼线、眉笔、口红/唇釉、面霜（全脸）、面膜等其它品类。"
         ),
         "prefer_queries": [
+            # EN + apply/on-face actions
             'tiktok "eye cream" apply under eye review',
+            'tiktok "eye cream" dabbing under-eye tutorial',
+            'tiktok "under eye cream" massage face',
+            # ES (MX) local + apply
             'tiktok "contorno de ojos" aplicar resena',
-            'tiktok "crema para ojos" rutina',
+            'tiktok "crema para ojos" rutina aplicar',
+            'tiktok "crema de ojos" ojeras masaje',
+            # PT (BR) local + apply
             'tiktok "creme para olhos" aplicacao',
+            'tiktok "creme para olhos" contorno olheiras',
+            # ID local + apply
+            'tiktok "krim mata" oleskan review',
+            'tiktok "krim mata" under eye',
+            # public mirrors already used in this repo (tikwm / urlebird only — no new downloaders)
             'site:tikwm.com/video "eye cream" apply',
+            'site:tikwm.com/video "contorno de ojos"',
             'site:urlebird.com/video "eye cream" under-eye',
+            'site:urlebird.com/video "creme para olhos"',
+            '"tiktok.com/@" "/video/" "eye cream" apply',
+            '"tiktok.com/@" "/video/" "contorno de ojos"',
+            '"tiktok.com/@" "/video/" "krim mata"',
         ],
         "reject_markers": [
             "mascara", "eyeliner", "eyebrow pencil", "brow pencil", "lipstick", "lip gloss",

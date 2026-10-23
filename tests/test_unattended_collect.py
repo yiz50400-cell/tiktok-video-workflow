@@ -19,8 +19,10 @@ from workflow.unattended.collect import (
     search_markets_for_round,
 )
 from workflow.unattended.discover_speed import (
+    BEAUTY_CROSS_MARKET_PROFILES,
     SUPPORTED_COLLECTION_MARKETS,
     count_reconnects,
+    discover_min_urls,
     infer_form_hints,
     load_seed_candidates,
     product_slug,
@@ -1297,3 +1299,41 @@ def test_collect_retries_discovery_on_429(tmp_path, monkeypatch):
     assert sleeps, "expected backoff sleep on 429"
     assert result.timings.get("discovery_rate_limited", 0) >= 1
     assert result.ok, result.reason
+
+def test_eye_cream_prefer_queries_include_local_apply_and_mirrors():
+    """Squeeze-web: eye_cream queries cover ES/PT/ID + apply verbs + known mirrors only."""
+    hints = infer_form_hints("墨西哥眼霜", "真人涂抹种草")
+    assert hints.profile == "eye_cream"
+    blob = "\n".join(hints.prefer_queries).casefold()
+    assert "contorno de ojos" in blob
+    assert "creme para olhos" in blob or "creme para olhos" in "\n".join(hints.prefer_queries)
+    assert "krim mata" in blob
+    assert "aplicar" in blob or "aplicacao" in blob or "oleskan" in blob
+    assert "site:tikwm.com" in blob and "site:urlebird.com" in blob
+    assert "tiktok.com/@" in blob
+    # do not invent shady downloaders
+    for banned in ("snaptik", "ssstik", "musicaldown", "tikmate"):
+        assert banned not in blob
+    assert "mascara" in " ".join(hints.reject_markers).casefold()
+
+
+def test_discover_min_urls_scales_with_candidate_budget():
+    assert discover_min_urls(8) == 10  # max(8, min(20, max(10, 8//6+8))) = 10
+    assert discover_min_urls(12) == 10
+    assert discover_min_urls(90) == 20  # capped
+    assert discover_min_urls(36) >= 10
+    assert discover_min_urls(36) > discover_min_urls(12)
+    prompt = render_discover_prompt(
+        {"product": "眼霜", "market": "MX", "style": "种草", "notes": ""},
+        max_candidates=90, max_searches=24,
+    )
+    assert "凑齐 ≥20 条规范" in prompt
+
+
+def test_beauty_profiles_listed_for_cross_market_expand():
+    assert "eye_cream" in BEAUTY_CROSS_MARKET_PROFILES
+    assert "lip_balm" in BEAUTY_CROSS_MARKET_PROFILES
+    # non-beauty stays task-market on round 1
+    assert search_markets_for_round("MX", round_num=1) == ["MX"]
+    # beauty expand_all path (used by collect for eye_cream/lip_balm)
+    assert set(search_markets_for_round("MX", round_num=1, expand_all=True)) == set(SUPPORTED_COLLECTION_MARKETS)

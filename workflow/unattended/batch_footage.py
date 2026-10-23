@@ -57,8 +57,10 @@ def collect_targets(count: int) -> CollectTargets:
         max_clips=max(10, prefer + n * 2),
         max_candidates=max(12, prefer * 3),
         # Large batches need more discovery rounds / searches before giving up.
-        discover_rounds=2 if n <= 2 else min(6, 2 + n),
-        max_searches=max(8, 4 + n * 2),
+        # Squeeze-web (2026-10-23): n>=8 gets +1 round ceiling and +1 search base —
+        # still conservative; quality gates unchanged. Expected ~+20–50% URLs, not App breadth.
+        discover_rounds=2 if n <= 2 else min(7 if n >= 8 else 6, 2 + n),
+        max_searches=max(8, (5 if n >= 8 else 4) + n * 2),
         screen_min_accepted=max(2, n * MIN_CLIPS_PER_VIDEO),
         screen_min_usable_s=max(12.0, 10.0 * n),
         screen_min_prominent=max(2, n * MIN_CLIPS_PER_VIDEO),

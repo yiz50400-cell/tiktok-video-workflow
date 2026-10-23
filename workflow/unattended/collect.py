@@ -33,9 +33,11 @@ from typing import Any, Callable
 from concurrent.futures import ThreadPoolExecutor
 
 from .discover_speed import (
+    BEAUTY_CROSS_MARKET_PROFILES,
     FormHints,
     SUPPORTED_COLLECTION_MARKETS,
     count_reconnects,
+    discover_min_urls,
     infer_form_hints,
     load_seed_candidates,
     save_seed_candidates,
@@ -367,7 +369,7 @@ def render_discover_prompt(
         .replace("{{search_scope_block}}", scope_block)
         .replace("{{search_priority_line}}", priority_line)
         .replace("{{search_language_hint}}", language_hint)
-        .replace("{{form_hints}}", hints.prompt_block(max_searches=searches, min_urls=max(8, min(max_candidates, 10))))
+        .replace("{{form_hints}}", hints.prompt_block(max_searches=searches, min_urls=discover_min_urls(max_candidates)))
     )
 
 
@@ -1096,7 +1098,13 @@ def collect_footage(
         tag = "" if rnd == 1 else f".round{rnd}"
         # --- A. discovery ---------------------------------------------------
         # Approach B: round 1 = task market; later rounds expand to MX/BR/ID/PH.
-        markets = search_markets_for_round(str(request.get("market") or "MX"), round_num=rnd)
+        # Beauty/skincare (eye_cream/lip_balm): round 1 also starts all-region (VO still task market).
+        beauty_expand = form_hints.profile in BEAUTY_CROSS_MARKET_PROFILES
+        markets = search_markets_for_round(
+            str(request.get("market") or "MX"),
+            round_num=rnd,
+            expand_all=beauty_expand,
+        )
         timings["discovery_scope"] = "all_regions" if len(markets) > 1 else "task_market"
         timings[f"discovery_markets_r{rnd}"] = float(len(markets))
         log(f"采集-检索第 {rnd} 轮范围：{'/'.join(markets)}（交付市场={request.get('market') or 'MX'}，口播语言不变）")

@@ -38,6 +38,11 @@ def test_video_count_and_collect_targets_scale_with_batch():
     assert three.screen_min_accepted >= 6
     assert three.max_candidates >= three.min_clips
     assert three.discover_rounds >= 2
+    ten = collect_targets(10)
+    # squeeze-web: large N gets ceiling 7 rounds and slightly higher search budget
+    assert ten.discover_rounds == 7
+    assert ten.max_searches == max(8, 5 + 10 * 2)
+    assert ten.max_searches > three.max_searches
 
 
 def test_partition_disjoint_when_pool_allows():
