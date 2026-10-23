@@ -2,7 +2,7 @@
 
 A. discovery: Codex (gpt-5.6-sol, read-only sandbox, live web search, ChatCut MCP
    disabled) proposes real TikTok creator videos. Round 1 prefers the task market;
-   later rounds expand across MX/BR/ID/PH. Delivery VO/captions stay on task market.
+   later rounds expand across global SUPPORTED_COLLECTION_MARKETS. Delivery VO/captions stay on task market.
    Speed path: form-factor hints in round-1 queries, search-budget in the prompt,
    seed-cache can seed the pool (never replaces discovery when short of batch target),
    reconnect abort, parallel downloads (see discover_speed.py).
@@ -61,11 +61,29 @@ MARKET_LANGUAGE = {
     "BR": ("pt-BR", "português do Brasil"),
     "ID": ("id-ID", "Bahasa Indonesia"),
     "PH": ("en-PH", "English (Philippines; light Taglish OK)"),
+    "US": ("en-US", "English (US)"),
+    "GB": ("en-GB", "English (UK)"),
+    "DE": ("de-DE", "Deutsch"),
+    "FR": ("fr-FR", "français"),
+    "ES": ("es-ES", "español (España)"),
+    "IT": ("it-IT", "italiano"),
+    "TR": ("tr-TR", "Türkçe"),
+    "TH": ("th-TH", "ไทย"),
+    "VN": ("vi-VN", "Tiếng Việt"),
+    "MY": ("ms-MY", "Bahasa Melayu"),
+    "JP": ("ja-JP", "日本語"),
+    "KR": ("ko-KR", "한국어"),
+    "CO": ("es-CO", "español (Colombia)"),
+    "AR": ("es-AR", "español (Argentina)"),
+    "CL": ("es-CL", "español (Chile)"),
+    "AU": ("en-AU", "English (Australia)"),
+    "SA": ("ar-SA", "العربية"),
+    "SG": ("en-SG", "English (Singapore)"),
 }
 
 
 def search_markets_for_round(task_market: str, *, round_num: int, expand_all: bool = False) -> list[str]:
-    """Approach B: task market first; expand to MX/BR/ID/PH when later rounds or forced.
+    """Approach B: task market first; expand to global supported markets when later rounds or forced.
 
     Delivery voiceover/captions stay on ``task_market``; this only widens footage discovery.
     """
@@ -83,17 +101,25 @@ def render_search_scope_block(task_market: str, search_markets: list[str]) -> tu
     task_market = str(task_market or "MX").upper()
     markets = [m for m in search_markets if m in SUPPORTED_COLLECTION_MARKETS] or [task_market]
     expanded = len(markets) > 1
-    lang_bits = []
-    for code in markets:
-        locale, language = MARKET_LANGUAGE.get(code, ("en", "English"))
-        lang_bits.append(f"{code}={language}（{locale}）")
     market_list = " / ".join(markets)
     nl = chr(10)
     if expanded:
+        if len(markets) > 6:
+            # Keep full market codes once; summarize language families so Codex prompt stays compact.
+            lang_line = (
+                "- 语种覆盖（摘要）：ES/PT/EN/ID/DE/FR/IT/TR/TH/VI/MS/JA/KO/AR + English；"
+                "完整市场码见上。另可辅以英语通吃查询。"
+            )
+        else:
+            lang_bits = []
+            for code in markets:
+                locale, language = MARKET_LANGUAGE.get(code, ("en", "English"))
+                lang_bits.append(f"{code}={language}（{locale}）")
+            lang_line = f"- 各市场语言：{'；'.join(lang_bits)}；另可辅以英语通吃查询。"
         block = (
             "## 素材检索范围（全区扩采）" + nl
-            + f"- 本轮在支持市场 **{market_list}** 检索同款商品竖屏种草/演示视频。" + nl
-            + f"- 各市场语言：{'; '.join(lang_bits)}；另可辅以英语通吃查询。" + nl
+            + f"- 本轮在全球主流 TikTok 市场 **{market_list}** 检索同款商品竖屏种草/演示视频。" + nl
+            + lang_line + nl
             + f"- 交付市场仍是 **{task_market}**：口播/字幕/CTA 语言后续制作按交付市场走；"
             + "本步只最大化独特可用的同款画面素材。" + nl
             + "- 画面语言、包装文案与交付市场不一致也可以入库（客户已确认可接受）。" + nl
@@ -101,14 +127,14 @@ def render_search_scope_block(task_market: str, search_markets: list[str]) -> tu
         priority = (
             f"在 {market_list} **同等优先**找高互动同款演示；不要只锁在交付市场 {task_market}。"
         )
-        hint = "各检索市场语言 + 英语 + hashtag 各试；四市场轮转，避免只搜交付市场。"
+        hint = "各检索市场语言 + 英语 + hashtag 各试；全球主流市场语种轮转，避免只搜交付市场。"
     else:
         lang_name = MARKET_LANGUAGE.get(task_market, ("en", "English"))[1]
         block = (
             "## 素材检索范围（优先交付市场）" + nl
             + f"- 本轮优先在交付市场 **{task_market}**（{lang_name}）检索。" + nl
-            + "- 同品类其他支持市场（MX/BR/ID/PH）的高互动同款镜头也可收入，用于补足干净商品操作画面。" + nl
-            + f"- 若本轮合格素材不够，下一轮会自动扩到全区四市场；口播/字幕仍按交付市场 {task_market}。" + nl
+            + "- 同品类其他全球支持市场的高互动同款镜头也可收入，用于补足干净商品操作画面。" + nl
+            + f"- 若本轮合格素材不够，下一轮会自动扩到全球支持市场；口播/字幕仍按交付市场 {task_market}。" + nl
         )
         priority = (
             f"优先目标市场语言与市场（{task_market}）的高互动视频，其次同品类其他支持市场的高互动视频，"
@@ -1097,7 +1123,7 @@ def collect_footage(
 
         tag = "" if rnd == 1 else f".round{rnd}"
         # --- A. discovery ---------------------------------------------------
-        # Approach B: round 1 = task market; later rounds expand to MX/BR/ID/PH.
+        # Approach B: round 1 = task market; later rounds expand to global supported markets.
         # Beauty/skincare (eye_cream/lip_balm): round 1 also starts all-region (VO still task market).
         beauty_expand = form_hints.profile in BEAUTY_CROSS_MARKET_PROFILES
         markets = search_markets_for_round(
@@ -1203,10 +1229,10 @@ def collect_footage(
                 # Keep whatever we got; later rounds expand to all supported markets.
                 log(
                     f"采集-检索第 1 轮只得到 {len(candidates)} 条有效 URL（需 ≥{min_clips}），"
-                    "先入库再扩到 MX/BR/ID/PH 全区补采"
+                    "先入库再扩到全球支持市场补采"
                 )
                 last_reason = (
-                    f"第 1 轮交付市场检索不足（{len(candidates)} < {min_clips}），准备全区扩采"
+                    f"第 1 轮交付市场检索不足（{len(candidates)} < {min_clips}），准备扩到全球支持市场"
                 )
             else:
                 timings["discovery_calls"] = discovery_calls
@@ -1240,7 +1266,7 @@ def collect_footage(
             return finish(True, f"采集完成：{len(kept)} 条 TikTok 竖屏素材入库（未做视觉初筛）", kept, all_candidates, keywords)
         enough, summary = _screen_ok(kept)
         # Require batch-scaled enough — screen_ok alone (legacy ≥2 defaults) must not
-        # end discovery before later rounds expand MX/BR/ID/PH.
+        # end discovery before later rounds expand to global supported markets.
         if enough:
             timings["discovery_calls"] = discovery_calls
             return finish(True, f"采集完成（{rnd} 轮检索）：累计{summary}", kept, all_candidates, keywords)

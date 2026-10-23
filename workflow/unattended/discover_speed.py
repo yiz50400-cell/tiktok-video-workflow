@@ -129,6 +129,9 @@ _PROFILES: list[dict[str, Any]] = [
             "contorno de ojos", "crema para ojos", "crema de ojos", "creme para olhos",
             "krim mata", "krim pelembab mata", "eye moisturizer", "under eye cream",
             "under-eye cream", "ojeras crema", "olheiras creme",
+            "Augencreme", "crème contour des yeux", "creme contour des yeux",
+            "アイクリーム", "아이크림", "kem mắt", "kem mat",
+            "ครีมตา", "ครีมบำรุงรอบดวงตา", "göz kremi", "goz kremi",
         ],
         "definition": (
             "眼霜/眼精华：涂抹于眼周的护肤霜/凝胶演示（点涂、按压、淡化黑眼圈/细纹）；"
@@ -158,6 +161,19 @@ _PROFILES: list[dict[str, Any]] = [
             '"tiktok.com/@" "/video/" "eye cream" apply',
             '"tiktok.com/@" "/video/" "contorno de ojos"',
             '"tiktok.com/@" "/video/" "krim mata"',
+            # TH / VN / DE / FR / JP / KR / TR / US (+ mirrors for a couple new terms)
+            'tiktok "ครีมตา" OR "ครีมบำรุงรอบดวงตา"',
+            'tiktok "kem mắt" review',
+            'tiktok "Augencreme" auftragen',
+            'tiktok "crème contour des yeux" appliquer',
+            'tiktok "アイクリーム" 塗る',
+            'tiktok "아이크림" 바르는',
+            'tiktok "göz kremi" uygulama',
+            'tiktok "eye cream" under eye tutorial USA',
+            'site:tikwm.com/video "Augencreme"',
+            'site:urlebird.com/video "アイクリーム"',
+            'site:tikwm.com/video "kem mắt"',
+            'site:urlebird.com/video "아이크림"',
         ],
         "reject_markers": [
             "mascara", "eyeliner", "eyebrow pencil", "brow pencil", "lipstick", "lip gloss",
@@ -179,8 +195,13 @@ _PROFILES: list[dict[str, Any]] = [
             'tiktok "lip balm" review apply',
             'tiktok "bálsamo labial" resenha',
             'tiktok "protetor labial" review',
+            'tiktok "lip balm" chapstick tutorial',
+            'tiktok "Lippenbalsam" auftragen',
+            'tiktok "baume à lèvres" appliquer',
+            'tiktok "ลิปบาล์ม" ทา',
             'site:tikwm.com/video "lip balm"',
             'site:urlebird.com/video "lip balm" moisturiz',
+            'site:tikwm.com/video "Lippenbalsam"',
         ],
         "reject_markers": [
             "eyebrow pencil", "eyebrow pen", "brow pencil", "brow pen", "eyeliner", "mascara",
@@ -260,7 +281,10 @@ def seed_path(seed_dir: Path, request: dict[str, Any]) -> Path:
     return Path(seed_dir) / f"{product_slug(str(request.get('product') or ''), str(request.get('market') or 'XX'))}.json"
 
 
-SUPPORTED_COLLECTION_MARKETS = ("MX", "BR", "ID", "PH")
+SUPPORTED_COLLECTION_MARKETS = (
+    "MX", "BR", "ID", "PH", "US", "GB", "DE", "FR", "ES", "IT", "TR", "TH",
+    "VN", "MY", "JP", "KR", "CO", "AR", "CL", "AU", "SA", "SG",
+)
 
 
 def _seed_items_from_path(path: Path) -> list[dict[str, Any]]:
