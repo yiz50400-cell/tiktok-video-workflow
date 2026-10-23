@@ -1173,6 +1173,86 @@ def test_collect_partial_ok_when_short_of_batch_floor(tmp_path, monkeypatch):
     assert "缺素材" in result.reason and "部分交付" in result.reason
 
 
+
+def test_thin_seed_cache_does_not_skip_discovery_for_batch(tmp_path, monkeypatch):
+    """Regression (IZ MX eye-cream): 2 cached seeds + weak screen_ok must NOT set
+    discovery_calls=0 / skip MX→BR/ID/PH expand when count needs a large pool.
+    """
+    from workflow.unattended.batch_footage import CollectTargets
+    from workflow.unattended.vision import ScreenOutcome
+
+    monkeypatch.setattr(
+        "workflow.unattended.collect.collect_targets",
+        lambda count: CollectTargets(
+            min_clips=20,
+            max_clips=30,
+            max_candidates=40,
+            discover_rounds=3,
+            max_searches=5,
+            screen_min_accepted=20,
+            screen_min_usable_s=100.0,
+            screen_min_prominent=20,
+        ),
+    )
+    req = {"product": "眼霜", "market": "MX", "count": 10, "style": "种草", "title": "t"}
+    seed_dir = tmp_path / "seeds"
+    # Only two previously-accepted links — historically enough to trip seed_screen_ok.
+    urls = [f"https://www.tiktok.com/@seed/video/{50000000000 + i}" for i in range(2)]
+    save_seed_candidates(seed_dir, req, candidates=[{"url": u} for u in urls], product_definition="眼霜")
+
+    prompts: list[str] = []
+    calls = {"n": 0}
+
+    def runner(prompt, *, command, cwd, events_path, timeout):
+        calls["n"] += 1
+        prompts.append(prompt)
+        last = Path(command[command.index("-o") + 1])
+        base = 60000000000 + calls["n"] * 100
+        # Each round only yields a couple of URLs so the batch floor stays unmet.
+        payload = {
+            "keywords": ["eye cream", "contorno de ojos"],
+            "candidates": [{"url": f"https://www.tiktok.com/@eye/video/{base + i}"} for i in range(2)],
+        }
+        last.write_text(json.dumps(payload), encoding="utf-8")
+        events_path.write_text("", encoding="utf-8")
+        return 0
+
+    def screener(request, dicts, **kwargs):
+        # Mimic old vision default: mark this tiny batch "ok" (≥2) while kwargs
+        # carry the real batch floor — collect must ignore weak screen_ok.
+        per = {
+            d["clip_id"]: {
+                "accepted": True,
+                "reason": "ok",
+                "usable_segments": [{"start_s": 0, "end_s": 8, "product_prominent": True}],
+            }
+            for d in dicts
+        }
+        return ScreenOutcome(True, "weak-ok", "眼霜", per)
+
+    result = collect_footage(
+        req,
+        tmp_path / "work",
+        discovery_runner=runner,
+        downloader=_fake_downloader(),
+        screener=screener,
+        seed_dir=seed_dir,
+        log=lambda _m: None,
+        discover_attempts=1,
+        skip_discovery_if_seeds=True,
+        avoid_used=False,
+    )
+    assert calls["n"] >= 2, f"expected multi-round discovery, got {calls['n']}: {result.reason}"
+    assert result.timings.get("discovery_calls", 0) >= 2
+    # Later rounds must actually expand beyond task market.
+    assert any("全区扩采" in p or "BR" in p for p in prompts[1:]), prompts
+    assert result.timings.get("discovery_scope") == "all_regions"
+    # Thin pool → partial ok is fine; claiming full seed-cache success is not.
+    assert "未跑 Codex 检索" not in result.reason
+    assert result.ok
+    assert result.timings.get("partial_pool") == 1.0
+
+
 def test_collect_retries_discovery_on_429(tmp_path, monkeypatch):
     from workflow.unattended import collect as mod
 

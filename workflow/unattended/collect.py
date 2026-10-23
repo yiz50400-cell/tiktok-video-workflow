@@ -4,7 +4,8 @@ A. discovery: Codex (gpt-5.6-sol, read-only sandbox, live web search, ChatCut MC
    disabled) proposes real TikTok creator videos. Round 1 prefers the task market;
    later rounds expand across MX/BR/ID/PH. Delivery VO/captions stay on task market.
    Speed path: form-factor hints in round-1 queries, search-budget in the prompt,
-   seed-cache reuse, reconnect abort, parallel downloads (see discover_speed.py).
+   seed-cache can seed the pool (never replaces discovery when short of batch target),
+   reconnect abort, parallel downloads (see discover_speed.py).
 B. retrieval + validation (deterministic Python): yt-dlp download, ffmpeg probe,
    vertical / duration / source checks, normalised H.264 copy and contact sheets.
 
@@ -1012,6 +1013,9 @@ def collect_footage(
         outcome = run_screen(
             request, dicts, product_definition=state["definition"],
             workdir=screen_dir, ffmpeg=ffmpeg, codex_bin=codex_bin, model=model,
+            min_accepted=screen_min_accepted,
+            min_usable_s=screen_min_usable_s,
+            min_prominent=screen_min_prominent,
         )
         add_time("screen_s", started)
         state["definition"] = outcome.product_definition or state["definition"]
@@ -1066,11 +1070,21 @@ def collect_footage(
                 timings["discovery_calls"] = 0
                 log(str(exc))
                 return finish(False, str(exc), kept, all_candidates, keywords or [product])
+        # Only skip Codex discovery when the *batch-scaled* floor is met.
+        # Never treat vision's weak default (≥2 clips) / seed_screen_ok as "batch complete"
+        # — that caused discovery_calls=0 + premature 采集完成 with ~2 cached links.
         enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
-        if seed_cands and skip_discovery_if_seeds and ((seed_screen_ok or enough) if screen else len(kept) >= min_clips):
+        pool_full = enough if screen else len(kept) >= min_clips
+        if seed_cands and skip_discovery_if_seeds and pool_full:
             timings["discover_s"] = timings.get("discover_s", 0.0)
             timings["discovery_calls"] = 0
             return finish(True, f"采集完成（种子缓存，未跑 Codex 检索）：累计{summary}", kept, all_candidates, keywords or [product])
+        if seed_cands and not pool_full:
+            log(
+                f"采集-种子仅 {len(kept)} 条可用（seed_screen_ok={seed_screen_ok}，"
+                f"未达批次目标 min_clips≥{min_clips} / {summary}），"
+                "继续 Codex 检索并扩区，不因种子命中提前结束"
+            )
 
     for rnd in range(1, max(1, discover_rounds) + 1):
         # If seeds already almost enough, still allow one discovery round only when needed.
@@ -1217,9 +1231,16 @@ def collect_footage(
             timings["discovery_calls"] = discovery_calls
             return finish(True, f"采集完成：{len(kept)} 条 TikTok 竖屏素材入库（未做视觉初筛）", kept, all_candidates, keywords)
         enough, summary = _screen_ok(kept)
-        if screen_ok or enough:
+        # Require batch-scaled enough — screen_ok alone (legacy ≥2 defaults) must not
+        # end discovery before later rounds expand MX/BR/ID/PH.
+        if enough:
             timings["discovery_calls"] = discovery_calls
             return finish(True, f"采集完成（{rnd} 轮检索）：累计{summary}", kept, all_candidates, keywords)
+        if screen_ok and not enough:
+            log(
+                f"采集-第 {rnd} 轮初筛对本批候选标记通过，但仍未达批次目标（{summary}），"
+                "继续补充检索/扩区"
+            )
         last_reason = (
             f"质量初筛不足（需 ≥{screen_min_accepted} 条、≥{screen_min_usable_s:.0f}s、"
             f"突出片段 ≥{screen_min_prominent}，已检索 {rnd} 轮）：累计{summary}"
