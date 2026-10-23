@@ -8,8 +8,11 @@ A. discovery: Codex (gpt-5.6-sol, read-only sandbox, live web search, ChatCut MC
 B. retrieval + validation (deterministic Python): yt-dlp download, ffmpeg probe,
    vertical / duration / source checks, normalised H.264 copy and contact sheets.
 
-Fails fast (never falls back to stock/sample footage) when fewer than
-``min_clips`` valid clips are obtained. See docs/采集规则-TikTok商品广告.md.
+Fails fast on true TikTok-unreachable (never stock/sample fallback).
+When the unique pool is short of ``min_clips`` but some clips exist, returns
+ok with a partial-pool reason so produce can deliver k/N instead of 0.
+429 / rate-limit backs off and retries; it must not end discovery early.
+See docs/采集规则-TikTok商品广告.md.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ from .discover_speed import (
     UsedFootageLedger,
 )
 
-from .batch_footage import collect_targets, video_count
+from .batch_footage import MIN_CLIPS_PER_VIDEO, collect_targets, video_count
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 DISCOVER_TEMPLATE = PROMPTS_DIR / "tiktok_discover.md"
@@ -484,7 +487,21 @@ class AvoidList:
 class DownloadFailure:
     """Turns yt-dlp output into a human reason (never just a WARNING line)."""
 
+    # Transient throttling — backoff+retry; do NOT treat as permanent TikTok-unreachable.
+    RATE_LIMIT_MARKERS = (
+        "429",
+        "too many requests",
+        "http error 429",
+        "rate-limit",
+        "rate limit",
+        "ratelimited",
+        "请求过多",
+        "频率限制",
+        "限流",
+    )
+
     # yt-dlp / TikTok patterns that mean this machine cannot reach TikTok usefully.
+    # Rate limits are intentionally excluded (see RATE_LIMIT_MARKERS / is_rate_limited).
     UNREACHABLE_MARKERS = (
         "unable to extract webpage video data",
         "unable to download webpage",
@@ -495,8 +512,6 @@ class DownloadFailure:
         "blocked",
         "ip address",
         "your ip",
-        "rate-limit",
-        "rate limit",
         "captcha",
         "login required",
         "cookies are needed",
@@ -522,9 +537,21 @@ class DownloadFailure:
     )
 
     @classmethod
+    def is_rate_limited(cls, reason: str | None) -> bool:
+        blob = (reason or "").casefold()
+        if not blob:
+            return False
+        if "tiktok 限流" in blob or "429" in blob:
+            return True
+        return any(m in blob for m in cls.RATE_LIMIT_MARKERS)
+
+    @classmethod
     def is_unreachable(cls, reason: str | None) -> bool:
         blob = (reason or "").casefold()
         if not blob:
+            return False
+        # 429 / rate-limit is transient — never classify as permanent unreachable.
+        if cls.is_rate_limited(reason):
             return False
         if "tiktok 不可达" in blob or "访问受限" in blob:
             return True
@@ -548,6 +575,12 @@ class DownloadFailure:
         lines = [l.strip() for l in output.strip().splitlines() if l.strip()]
         errors = [l for l in lines if l.startswith("ERROR") or "ERROR:" in l]
         joined = "\n".join(errors or [l for l in lines if not l.startswith("WARNING")])
+        if cls.is_rate_limited(joined) or cls.is_rate_limited(output):
+            detail = ("yt-dlp: " + " | ".join(errors[-2:]))[:180] if errors else "HTTP 429"
+            return (
+                f"TikTok 限流（429）。{detail}。"
+                "处理：退避重试，勿当成网络全挂而提前结束采集。"
+            )
         if cls.is_unreachable(joined) or cls.is_unreachable(output):
             detail = ("yt-dlp: " + " | ".join(errors[-2:]))[:180] if errors else "网络/代理层失败"
             return f"TikTok 不可达（访问受限）。{detail}。处理：{cls.OPERATOR_TIP}"
@@ -605,8 +638,32 @@ DISCOVERY_NO_SEARCH_MARKERS = (
     "cannot search and verify",
 )
 
+DISCOVERY_RATE_LIMIT_MARKERS = (
+    "429",
+    "too many requests",
+    "rate limit",
+    "rate-limit",
+    "ratelimited",
+    "请求过多",
+    "频率限制",
+    "限流",
+    "quota exceeded",
+)
+
+
+def discovery_is_rate_limited(text: str | None) -> bool:
+    """True when discovery output / events show web_search or API throttling."""
+    blob = text or ""
+    low = blob.casefold()
+    if any(m in low for m in DISCOVERY_RATE_LIMIT_MARKERS):
+        return True
+    return bool(re.search(r"\b429\b", blob))
+
 
 def discovery_admits_no_search(text: str | None) -> bool:
+    # Rate-limit looks like "cannot search" sometimes — never treat 429 as missing tool.
+    if discovery_is_rate_limited(text):
+        return False
     blob = text or ""
     low = blob.casefold()
     if any(marker.casefold() in low for marker in DISCOVERY_NO_SEARCH_MARKERS):
@@ -617,6 +674,7 @@ def discovery_admits_no_search(text: str | None) -> bool:
 def download_candidate(
     cand: Candidate, raw_dir: Path, *, ffmpeg: str, timeout: float = 180,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    rate_limit_retries: int = 3,
 ) -> None:
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_tmpl = str(raw_dir / f"{cand.video_id}.%(ext)s")
@@ -628,28 +686,41 @@ def download_candidate(
         *ytdlp_proxy_args(),
         "-o", out_tmpl, cand.url,
     ]
-    try:
-        completed = runner(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-    except subprocess.TimeoutExpired:
-        cand.status, cand.failure_reason = "download_failed", f"yt-dlp 超时 {timeout}s"
-        return
-    media = [p for p in raw_dir.glob(f"{cand.video_id}.*") if p.suffix.lower() in {".mp4", ".mov", ".webm", ".mkv"}]
-    if completed.returncode != 0 or not media:
-        cand.status, cand.failure_reason = "download_failed", DownloadFailure.describe(
-            completed.returncode, (completed.stderr or "") + "\n" + (completed.stdout or ""), raw_dir, cand.video_id)
-        return
-    cand.raw_path = str(media[0])
-    info_path = raw_dir / f"{cand.video_id}.info.json"
-    if info_path.is_file():
+    attempts = max(1, int(rate_limit_retries) + 1)
+    completed = None
+    for try_i in range(1, attempts + 1):
         try:
-            info = json.loads(info_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            info = {}
-        keep = ("id", "title", "description", "uploader", "uploader_id", "channel", "webpage_url",
-                "extractor", "duration", "view_count", "like_count", "comment_count", "repost_count",
-                "save_count", "timestamp", "upload_date", "tags", "width", "height", "vcodec")
-        cand.info = {k: info.get(k) for k in keep if k in info}
-    cand.status = "downloaded"
+            completed = runner(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:
+            cand.status, cand.failure_reason = "download_failed", f"yt-dlp 超时 {timeout}s"
+            return
+        media = [p for p in raw_dir.glob(f"{cand.video_id}.*") if p.suffix.lower() in {".mp4", ".mov", ".webm", ".mkv"}]
+        if completed.returncode == 0 and media:
+            cand.raw_path = str(media[0])
+            info_path = raw_dir / f"{cand.video_id}.info.json"
+            if info_path.is_file():
+                try:
+                    info = json.loads(info_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    info = {}
+                keep = ("id", "title", "description", "uploader", "uploader_id", "channel", "webpage_url",
+                        "extractor", "duration", "view_count", "like_count", "comment_count", "repost_count",
+                        "save_count", "timestamp", "upload_date", "tags", "width", "height", "vcodec")
+                cand.info = {k: info.get(k) for k in keep if k in info}
+            cand.status = "downloaded"
+            return
+        reason = DownloadFailure.describe(
+            completed.returncode,
+            (completed.stderr or "") + "\n" + (completed.stdout or ""),
+            raw_dir,
+            cand.video_id,
+        )
+        cand.status, cand.failure_reason = "download_failed", reason
+        if DownloadFailure.is_rate_limited(reason) and try_i < attempts:
+            delay = min(60.0, float(2 ** try_i))
+            time.sleep(delay)
+            continue
+        return
 
 
 def normalize_clip(raw: Path, dest: Path, probe: Probe, *, ffmpeg: str) -> None:
@@ -1034,13 +1105,16 @@ def collect_footage(
         candidates: list[Candidate] = []
         rc: int | str = "n/a"
         attempts = max(1, discover_attempts if rnd == 1 else 1)
-        for attempt in range(1, attempts + 1):
+        attempt = 0
+        while attempt < attempts:
+            attempt += 1
             if last_path.exists():
                 last_path.replace(logs_dir / f"discover-last-message{tag}.attempt{attempt - 1}.txt")
+            events_path = logs_dir / f"discover-events{tag}{'' if attempt == 1 else '.attempt' + str(attempt)}.jsonl"
             try:
                 run_kwargs: dict[str, Any] = dict(
                     command=command, cwd=work_dir,
-                    events_path=logs_dir / f"discover-events{tag}{'' if attempt == 1 else '.attempt' + str(attempt)}.jsonl",
+                    events_path=events_path,
                     timeout=discover_timeout,
                 )
                 # reconnect_abort is only for the real Codex runner; test doubles must not see it
@@ -1055,6 +1129,20 @@ def collect_footage(
                 log(f"采集-检索第 {rnd} 轮第 {attempt} 次 Codex 超时（{discover_timeout}s）")
                 continue
             text = last_path.read_text(encoding="utf-8") if last_path.is_file() else ""
+            events_blob = events_path.read_text(encoding="utf-8") if events_path.is_file() else ""
+            rate_blob = f"{text}\n{events_blob}"
+            if discovery_is_rate_limited(rate_blob):
+                timings["discovery_rate_limited"] = timings.get("discovery_rate_limited", 0.0) + 1.0
+                delay = min(60.0, float(2 ** min(attempt, 5)))
+                log(
+                    f"采集-检索第 {rnd} 轮第 {attempt} 次遇到 429/限流，"
+                    f"退避 {delay:.0f}s 后重试（不提前结束检索）"
+                )
+                time.sleep(delay)
+                # Extend budget so throttling does not burn the only attempt.
+                if attempt >= attempts and attempts < 6:
+                    attempts = min(6, attempts + 2)
+                continue
             if discovery_admits_no_search(text) and not parse_discovery_output(text)[0]:
                 timings["discovery_calls"] = discovery_calls
                 return finish(
@@ -1144,11 +1232,45 @@ def collect_footage(
         try:
             ingest_candidates(fallback, rnd=99, tag=".reused")
         except TikTokUnreachableError as exc:
-            return finish(False, str(exc), kept, all_candidates, keywords)
+            # If we already have usable clips, still allow partial deliver instead of zero.
+            if kept:
+                log(str(exc))
+                last_reason = f"{last_reason}；旧素材补位遇 TikTok 不可达：{exc}"
+            else:
+                return finish(False, str(exc), kept, all_candidates, keywords)
         enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
         if enough:
             return finish(True, f"采集完成（新素材不足，含旧素材补位）：累计{summary}", kept, all_candidates, keywords)
         last_reason = f"{last_reason}；旧素材补位后仍不足：{summary}"
+
+    # Partial deliver: never all-or-nothing fail with 0 when some usable clips exist.
+    # Producer will partition into as many disjoint videos as the pool allows.
+    if len(kept) >= MIN_CLIPS_PER_VIDEO:
+        timings["partial_pool"] = 1.0
+        timings["partial_kept"] = float(len(kept))
+        return finish(
+            True,
+            (
+                f"缺素材：目标≥{min_clips} 条互不重复源，已采到可用 {len(kept)} 条；"
+                f"改为部分交付（不做 0 成片失败）。{last_reason}"
+            ),
+            kept,
+            all_candidates,
+            keywords,
+        )
+    if len(kept) >= 1:
+        timings["partial_pool"] = 1.0
+        timings["partial_kept"] = float(len(kept))
+        return finish(
+            True,
+            (
+                f"缺素材：仅 {len(kept)} 条可用源（目标≥{min_clips}）；"
+                f"将按每条成片 ≥1 源尝试部分交付。{last_reason}"
+            ),
+            kept,
+            all_candidates,
+            keywords,
+        )
     return finish(False, last_reason, kept, all_candidates, keywords)
 
 

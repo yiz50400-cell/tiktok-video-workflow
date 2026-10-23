@@ -521,8 +521,16 @@ class Producer:
                     "candidates": len(collection.candidates),
                 }
                 if not collection.ok:
-                    return self._fail(task_id, workflow_job_id, f"采集阶段失败：{collection.reason}",
-                                      delivery_paths=[], audit_path=audit_path)
+                    from .batch_footage import unique_clips as _unique_clips
+                    if collection.clips and _unique_clips(list(collection.clips)):
+                        self._log(
+                            f"采集未达满额但有可用素材，继续尝试部分交付："
+                            f"{collection.reason}"
+                        )
+                        stages["collect"]["partial"] = True
+                    else:
+                        return self._fail(task_id, workflow_job_id, f"采集阶段失败：{collection.reason}",
+                                          delivery_paths=[], audit_path=audit_path)
                 self._log(collection.reason)
             from dataclasses import asdict as _asdict
             from .batch_footage import (
@@ -531,7 +539,10 @@ class Producer:
                 video_count,
             )
             clips = [_asdict(c) for c in collection.clips]
-            batch_n = video_count(request)
+            requested_n = video_count(request)
+            batch_n = requested_n
+            self._batch_requested_count = requested_n
+            self._batch_partial_note = ""
             partition = partition_clips_disjoint(clips, batch_n)
             if not partition.ok:
                 # One refill attempt: raise collect floors and avoid current ids via ledger-style avoid in collect.
@@ -545,24 +556,30 @@ class Producer:
                     "ok": refill.ok, "reason": refill.reason,
                     "clips": len(refill.clips), "candidates": len(refill.candidates),
                 }
-                if not refill.ok:
-                    return self._fail(
-                        task_id, workflow_job_id,
-                        f"同批 {batch_n} 条成片素材不够且补采失败：{partition.reason}；补采：{refill.reason}",
-                        delivery_paths=[], audit_path=audit_path,
-                    )
-                collection = refill
-                clips = [_asdict(c) for c in collection.clips]
-                partition = partition_clips_disjoint(clips, batch_n)
+                # Prefer whatever pool we have (refill or prior) for partial deliver.
+                if refill.ok or refill.clips:
+                    collection = refill if (refill.ok or len(refill.clips) >= len(collection.clips)) else collection
+                    clips = [_asdict(c) for c in collection.clips]
+                    partition = partition_clips_disjoint(clips, batch_n)
                 if not partition.ok:
+                    partition = partition_clips_disjoint(clips, batch_n, allow_partial=True)
+                if not partition.ok or not partition.bundles:
                     return self._fail(
                         task_id, workflow_job_id,
-                        f"补采后仍无法为同批 {batch_n} 条成片分配互不重复素材：{partition.reason}",
+                        f"同批 {requested_n} 条成片素材不够且无法部分交付："
+                        f"{partition.reason}；补采：{stages.get('collect_refill', {}).get('reason', 'n/a')}",
                         delivery_paths=[], audit_path=audit_path,
                     )
+            if len(partition.bundles) < requested_n:
+                batch_n = len(partition.bundles)
+                self._batch_partial_note = f"缺素材，已交付计划 {batch_n}/{requested_n}"
+                self._log(self._batch_partial_note + f"：{partition.reason}")
             stages["batch_partition"] = {
                 "ok": True, "reason": partition.reason,
                 "unique": partition.unique_count, "need": partition.need,
+                "requested_count": requested_n,
+                "deliver_count": batch_n,
+                "partial": batch_n < requested_n,
                 "per_video": [len(b) for b in partition.bundles],
                 "assignments": [
                     {"video_index": i, "clip_ids": [str(c.get("clip_id")) for c in bundle]}
@@ -752,10 +769,21 @@ class Producer:
 
         if completed.returncode == 0 and export_paths:
             delivered = self._copy_to_delivery(export_paths, delivery_dir)
-            reason = (
-                f"ChatCut/Codex 制作完成（model={self.options.codex_model}），"
-                f"已交付 {len(delivered)} 个文件"
-            )
+            partial_note = getattr(self, "_batch_partial_note", "") or ""
+            requested_n = int(getattr(self, "_batch_requested_count", 0) or 0)
+            if partial_note or (requested_n and len(delivered) < requested_n):
+                k = len(delivered)
+                n = requested_n or k
+                reason = (
+                    f"ChatCut/Codex 制作完成（model={self.options.codex_model}），"
+                    f"缺素材，已交付 {k}/{n}"
+                    + (f"（{partial_note}）" if partial_note and f"{k}/{n}" not in partial_note else "")
+                )
+            else:
+                reason = (
+                    f"ChatCut/Codex 制作完成（model={self.options.codex_model}），"
+                    f"已交付 {len(delivered)} 个文件"
+                )
             self._update_state(
                 task_id,
                 workflow_job_id,

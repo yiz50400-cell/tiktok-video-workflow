@@ -1088,3 +1088,132 @@ def test_collect_expands_markets_on_round_two(tmp_path):
     assert result.timings.get("discovery_scope") == "all_regions"
     assert result.ok
 
+
+def test_discovery_rate_limit_detection_and_not_no_search():
+    from workflow.unattended.collect import discovery_admits_no_search, discovery_is_rate_limited
+
+    blob = "Error: 429 Too Many Requests while calling web_search"
+    assert discovery_is_rate_limited(blob)
+    assert not discovery_admits_no_search(blob)
+    assert discovery_is_rate_limited("请求过多 / 频率限制")
+    assert not discovery_is_rate_limited('{"candidates":[{"url":"https://www.tiktok.com/@a/video/1"}]}')
+
+
+def test_download_failure_rate_limit_not_unreachable(tmp_path):
+    from workflow.unattended.collect import DownloadFailure
+
+    msg = DownloadFailure.describe(
+        1,
+        "ERROR: [TikTok] 456: HTTP Error 429: Too Many Requests",
+        tmp_path,
+        "456",
+    )
+    assert "限流" in msg or "429" in msg
+    assert DownloadFailure.is_rate_limited(msg)
+    assert not DownloadFailure.is_unreachable(msg)
+
+
+def test_collect_partial_ok_when_short_of_batch_floor(tmp_path, monkeypatch):
+    """Batch floor needs many clips; with only a handful accepted still ok for partial deliver."""
+    from workflow.unattended.batch_footage import CollectTargets
+    from workflow.unattended.vision import ScreenOutcome
+
+    # Keep discovery cheap while still exercising the high floor / partial path.
+    monkeypatch.setattr(
+        "workflow.unattended.collect.collect_targets",
+        lambda count: CollectTargets(
+            min_clips=20,
+            max_clips=30,
+            max_candidates=40,
+            discover_rounds=2,
+            max_searches=5,
+            screen_min_accepted=20,
+            screen_min_usable_s=100.0,
+            screen_min_prominent=20,
+        ),
+    )
+    req = {"product": "眼霜", "market": "MX", "count": 10, "style": "种草"}
+    seen = {"n": 0}
+
+    def runner(prompt, *, command, cwd, events_path, timeout):
+        seen["n"] += 1
+        last = Path(command[command.index("-o") + 1])
+        base = 20000000000 + seen["n"] * 100
+        urls = [f"https://www.tiktok.com/@eye/video/{base + i}" for i in range(2)]
+        last.write_text(__import__("json").dumps({"keywords": ["eye cream"], "candidates": [{"url": u} for u in urls]}), encoding="utf-8")
+        events_path.write_text("", encoding="utf-8")
+        return 0
+
+    def screener(request, dicts, **kwargs):
+        per = {
+            d["clip_id"]: {
+                "accepted": True,
+                "reason": "ok",
+                "usable_segments": [{"start_s": 0, "end_s": 6, "product_prominent": True}],
+            }
+            for d in dicts
+        }
+        return ScreenOutcome(False, "不足", "眼霜", per)
+
+    result = collect_footage(
+        req,
+        tmp_path,
+        discovery_runner=runner,
+        downloader=_fake_downloader(),
+        screener=screener,
+        log=lambda _m: None,
+        discover_attempts=1,
+        skip_discovery_if_seeds=True,
+        avoid_used=False,
+        seed_dir=None,
+    )
+    assert result.ok, result.reason
+    assert len(result.clips) >= 2
+    assert result.timings.get("partial_pool") == 1.0
+    assert "缺素材" in result.reason and "部分交付" in result.reason
+
+
+def test_collect_retries_discovery_on_429(tmp_path, monkeypatch):
+    from workflow.unattended import collect as mod
+
+    sleeps = []
+    monkeypatch.setattr(mod.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def runner(prompt, *, command, cwd, events_path, timeout):
+        calls["n"] += 1
+        last = Path(command[command.index("-o") + 1])
+        if calls["n"] == 1:
+            last.write_text("429 Too Many Requests from web_search", encoding="utf-8")
+            events_path.write_text("rate limit", encoding="utf-8")
+            return 1
+        payload = {
+            "keywords": ["crema"],
+            "candidates": [
+                {"url": f"https://www.tiktok.com/@ok/video/{30000000000 + i}"} for i in range(4)
+            ],
+        }
+        last.write_text(__import__("json").dumps(payload), encoding="utf-8")
+        events_path.write_text("", encoding="utf-8")
+        return 0
+
+    result = collect_footage(
+        {"product": "护手霜", "market": "MX", "count": 1},
+        tmp_path,
+        discovery_runner=runner,
+        downloader=_fake_downloader(),
+        log=lambda _m: None,
+        screen=False,
+        discover_attempts=1,
+        discover_rounds=1,
+        min_clips=3,
+        max_clips=6,
+        max_candidates=6,
+        skip_discovery_if_seeds=True,
+        avoid_used=False,
+        seed_dir=None,
+    )
+    assert calls["n"] >= 2
+    assert sleeps, "expected backoff sleep on 429"
+    assert result.timings.get("discovery_rate_limited", 0) >= 1
+    assert result.ok, result.reason

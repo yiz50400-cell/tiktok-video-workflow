@@ -116,3 +116,40 @@ def test_verify_expected_count_mismatch(tmp_path: Path, monkeypatch):
     )
     assert not out.ok
     assert "应恰好导出 3" in out.reason
+
+
+def test_partition_partial_delivers_k_of_n_when_pool_short():
+    """12 unique clips + count=10 (need 20) → deliver 6 videos, not fail with 0."""
+    clips = [_clip(str(i)) for i in range(12)]
+    refused = partition_clips_disjoint(clips, 10)
+    assert not refused.ok
+    assert refused.need == 20
+    partial = partition_clips_disjoint(clips, 10, allow_partial=True)
+    assert partial.ok, partial.reason
+    assert len(partial.bundles) == 6  # 12 // 2
+    assert all(len(b) >= 2 for b in partial.bundles)
+    ids = [{c["clip_id"] for c in b} for b in partial.bundles]
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            assert not (ids[i] & ids[j])
+    assert "缺素材" in partial.reason and "6/10" in partial.reason
+
+
+def test_partition_partial_keeps_min_two_when_possible():
+    """3 clips / count=5: still prefer 1 video with ≥2 sources over 3 thin 1-source videos."""
+    clips = [_clip(str(i)) for i in range(3)]
+    partial = partition_clips_disjoint(clips, 5, allow_partial=True)
+    assert partial.ok
+    assert len(partial.bundles) == 1
+    assert len(partial.bundles[0]) >= 2
+    assert "1/5" in partial.reason
+
+
+def test_partition_partial_lowers_to_one_clip_when_needed():
+    """Only when the pool cannot support even one ≥2-source video, drop floor to 1."""
+    clips = [_clip("only")]
+    partial = partition_clips_disjoint(clips, 5, allow_partial=True)
+    assert partial.ok
+    assert len(partial.bundles) == 1
+    assert len(partial.bundles[0]) == 1
+    assert "1/5" in partial.reason

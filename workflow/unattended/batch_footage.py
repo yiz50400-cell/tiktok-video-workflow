@@ -54,10 +54,11 @@ def collect_targets(count: int) -> CollectTargets:
     prefer = max(min_clips, n * CLIPS_PER_VIDEO)
     return CollectTargets(
         min_clips=min_clips,
-        max_clips=max(10, prefer + n),
-        max_candidates=max(12, prefer * 2),
-        discover_rounds=2 if n <= 2 else min(4, 1 + n),
-        max_searches=max(5, 3 + n * 2),
+        max_clips=max(10, prefer + n * 2),
+        max_candidates=max(12, prefer * 3),
+        # Large batches need more discovery rounds / searches before giving up.
+        discover_rounds=2 if n <= 2 else min(6, 2 + n),
+        max_searches=max(8, 4 + n * 2),
         screen_min_accepted=max(2, n * MIN_CLIPS_PER_VIDEO),
         screen_min_usable_s=max(12.0, 10.0 * n),
         screen_min_prominent=max(2, n * MIN_CLIPS_PER_VIDEO),
@@ -157,11 +158,15 @@ def partition_clips_disjoint(
     count: int,
     *,
     min_per_video: int = MIN_CLIPS_PER_VIDEO,
+    allow_partial: bool = False,
 ) -> PartitionResult:
     """Split unique clips into ``count`` disjoint bundles.
 
-    Never reshuffles the same clip_id into multiple videos. If the pool is short,
-    ``ok=False`` and the caller must collect more — not pad by reordering.
+    Never reshuffles the same clip_id into multiple videos. If the pool is short
+    and ``allow_partial`` is False, ``ok=False`` so the caller can refill.
+    With ``allow_partial=True``, deliver as many videos as the pool allows
+    (prefer ≥min_per_video each; carefully drop to 1/video only when needed)
+    instead of all-or-nothing zero deliveries.
     """
     n = max(1, int(count))
     per = max(1, int(min_per_video))
@@ -171,18 +176,60 @@ def partition_clips_disjoint(
         # Single video: hand the whole unique pool through (existing behaviour).
         return PartitionResult(True, [list(pool)], f"单条成片，素材池 {len(pool)} 条", len(pool), need)
     if len(pool) < need:
+        if not allow_partial:
+            return PartitionResult(
+                False,
+                [],
+                (
+                    f"同批 {n} 条成片需要至少 {need} 条互不重复源素材"
+                    f"（每条 ≥{per}），当前只有 {len(pool)} 条；"
+                    "禁止把同一批素材换序复用凑数，请补采后再制作"
+                ),
+                len(pool),
+                need,
+            )
+        # Partial: maximize videos while keeping bundles disjoint.
+        per_use = per
+        k = len(pool) // per_use
+        lowered = False
+        if k < 1 and len(pool) >= 1:
+            per_use = 1
+            k = len(pool)
+            lowered = True
+        if k < 1:
+            return PartitionResult(
+                False,
+                [],
+                f"素材池为空，无法交付任何成片（目标 {n}）",
+                0,
+                need,
+            )
+        k = min(k, n)
+        bundles: list[list[Any]] = [[] for _ in range(k)]
+        for index, clip in enumerate(pool):
+            bundles[index % k].append(clip)
+        for index, bundle in enumerate(bundles):
+            if len(bundle) < per_use:
+                return PartitionResult(
+                    False,
+                    [],
+                    f"部分交付分区失败：第 {index + 1} 条只分到 {len(bundle)} 条（需 ≥{per_use}）",
+                    len(pool),
+                    need,
+                )
+        floor_note = f"，已降至每条 ≥{per_use} 源" if lowered else f"（每条 ≥{per_use}）"
         return PartitionResult(
-            False,
-            [],
+            True,
+            bundles,
             (
-                f"同批 {n} 条成片需要至少 {need} 条互不重复源素材"
-                f"（每条 ≥{per}），当前只有 {len(pool)} 条；"
-                "禁止把同一批素材换序复用凑数，请补采后再制作"
+                f"缺素材：目标 {n} 条成片需 ≥{need} 源，池仅 {len(pool)}；"
+                f"已按互不重复分配 {k}/{n} 条成片{floor_note}——"
+                f"缺素材，已交付计划 {k}/{n}"
             ),
             len(pool),
             need,
         )
-    bundles: list[list[Any]] = [[] for _ in range(n)]
+    bundles = [[] for _ in range(n)]
     for index, clip in enumerate(pool):
         bundles[index % n].append(clip)
     for index, bundle in enumerate(bundles):
