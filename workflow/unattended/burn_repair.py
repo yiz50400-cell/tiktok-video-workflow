@@ -6,13 +6,13 @@ IZ/Yang (2026-10-26):
   3) ROI hugs the subtitle/text bbox only (MAX_BAND_FRAC, assert_safe_roi).
      Ban tall / full-frame / face smear (v5b cream smear).
 
-Preferred engine, proven on full-clip 754595 (delogo stretch/mosaic was the QA fail):
-  crop the hug-ROI → hue=s=0 → boxblur=10:2 → boxblur=10:2
-  → overlay=X:Y:enable='between(t,t0,t1)'
-ffmpeg delogo interpolates the rectangle from its border and stretches colored
-subtitle chips, so it is only a fallback after boxblur. LaMa stays optional.
+Look: fill / inpaint (LaMa) so the text is gone and skin stays natural.
+IZ rejected gray soft boxblur bars (roi_sample_fix) — those are not the default
+final look. Engine order is lama, then boxblur only if the weights are missing,
+then delogo last because its border interpolation stretches colored chips.
 
-Outputs need visual review — same posture as workflow.repair.
+Temporal ROI plans carry intervals. LaMa paints a box only inside those
+intervals (workflow.repair.intervals). Outputs need visual review.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ FACE_ZONE_Y0 = 0.18
 FACE_ZONE_Y1 = 0.55
 MAX_FACE_OVERLAP_FRAC = 0.08  # max overlap with face zone vs frame height
 DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
-# boxblur before delogo: delogo's border interpolation stretches opaque chips.
-DEFAULT_SALVAGE_ENGINES = ("boxblur", "delogo", "lama")
+# Fill first. Gray boxblur is a degraded fallback. Delogo is last (it stretches).
+DEFAULT_SALVAGE_ENGINES = ("lama", "boxblur", "delogo")
 # Mac 754595: radius 10, power 2, applied twice after desaturating the ROI.
 PROVEN_BLUR_RADIUS = 10
 PROVEN_BLUR_POWER = 2
@@ -415,7 +415,7 @@ def mask_spec_from_frames(
             "dimensions": [width, height],
             "regions": timed,
             "purpose": "burned_text_salvage",
-            "preferred_engine": "boxblur",
+            "preferred_engine": "lama",
         }
     # Fallback: thin top/bottom/lower-third bands (never a tall center box).
     selected = list(regions or text_regions_from_frames(frames))
@@ -444,7 +444,7 @@ def mask_spec_from_frames(
         "dimensions": [width, height],
         "regions": boxes,
         "purpose": "burned_text_salvage",
-        "preferred_engine": "boxblur",
+        "preferred_engine": "lama",
     }
 
 
@@ -473,9 +473,9 @@ def repair_hint_from_decision(
         "mask_spec": spec,
         "needs_visual_review": True,
         "note": (
-            "burned-in text → direct temporal salvage (hue=s=0 + boxblur=10:2 twice, "
-            "enable=between). delogo is fallback only — it stretches colored chips. "
-            "not cut/dodge-first"
+            "burned-in text → direct temporal salvage. Final look is LaMa fill "
+            "inside hug-ROI intervals (text gone, skin kept). Gray boxblur is not "
+            "the default look. delogo is last resort (stretch). not cut/dodge-first"
         ),
     }
 
@@ -521,10 +521,10 @@ def _enable_clause(region: dict[str, Any]) -> str:
 
 
 def _boxblur_steps(w: int, h: int) -> str:
-    """Proven chain: desaturate, then boxblur=10:2 twice.
+    """Degraded fallback only — IZ rejected this gray bar as the final look.
 
-    Radius stays 10 on every ROI that can hold it (754595 chips are >=48px).
-    Smaller crops clamp the radius so ffmpeg does not reject the graph.
+    Kept so a missing LaMa weight can still cover text. Radius 10, twice,
+    after desaturate. Not the default salvage engine.
     """
     radius = min(PROVEN_BLUR_RADIUS, max(1, min(int(w), int(h)) - 1))
     step = f"boxblur={radius}:{PROVEN_BLUR_POWER}"
@@ -601,6 +601,28 @@ def remove_or_blur_burn(
     }
 
 
+def resolve_lama_model(model: Path | None = None) -> Path:
+    """Return an existing LaMa weight file, or raise FileNotFoundError.
+
+    An explicit ``model`` path is not replaced with a different file.
+    The default search is cwd-relative ``.runtime/models/big-lama.pt`` and the
+    same path under the repo root.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    if model:
+        requested = Path(model)
+        candidates = [requested] if requested.is_absolute() else [requested, repo / requested]
+    else:
+        candidates = [DEFAULT_LAMA_MODEL, repo / DEFAULT_LAMA_MODEL]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "LaMa model missing: " + ", ".join(str(path) for path in candidates)
+        + " — burn salvage look is fill/inpaint; pass --model"
+    )
+
+
 def lama_repair_burn(
     source: Path,
     spec_path: Path,
@@ -611,16 +633,9 @@ def lama_repair_burn(
     duration: float | None = None,
     device: str = "auto",
 ) -> dict[str, Any]:
+    model = resolve_lama_model(model)
     from workflow.repair import run_repair
 
-    model = Path(model or DEFAULT_LAMA_MODEL)
-    if not model.is_file():
-        repo = Path(__file__).resolve().parents[2]
-        candidate = repo / DEFAULT_LAMA_MODEL
-        if candidate.is_file():
-            model = candidate
-    if not model.is_file():
-        raise FileNotFoundError(f"LaMa model missing: {model}")
     if duration is None:
         raise ValueError("duration required for lama_repair_burn")
     record = run_repair(
@@ -691,7 +706,7 @@ def salvage_demoted_burn(
                 out = workdir / f"salvaged_{engine}.mp4"
                 result = remove_or_blur_burn(source, spec, out, ffmpeg=ffmpeg, engine=engine)
             elif engine == "lama":
-                dur = min(float(duration), 12.0)
+                dur = float(duration)
                 result = lama_repair_burn(
                     source, spec_path, workdir / "lama",
                     model=lama_model, start=0.0, duration=dur,
@@ -718,8 +733,12 @@ def salvage_demoted_burn(
                 "usable_s": round(float(duration), 2),
                 "needs_visual_review": True,
                 "reason": (
-                    f"烧录文字直接 salvage：{result.get('engine') or engine} 时间轴去字/模糊"
-                    f"（regions={hint.get('regions')}，需目视复核）"
+                    "烧录文字直接 salvage："
+                    + (
+                        "LaMa 填补去字（贴 ROI，皮肤保留，需目视复核）"
+                        if (result.get("engine") or engine) == "lama"
+                        else f"{result.get('engine') or engine} 降级（LaMa 未用上，需目视复核）"
+                    )
                 ),
                 "repair_hint": hint,
                 "salvage_errors": errors,
@@ -751,7 +770,12 @@ def mask_from_plan(plan: dict[str, Any], width: int, height: int) -> dict[str, A
         regions.append(region)
     if not regions:
         raise UnsafeBurnRoiError("ROI plan has no regions")
-    return {"dimensions": [int(width), int(height)], "regions": regions, "purpose": "burned_text_salvage"}
+    return {
+        "dimensions": [int(width), int(height)],
+        "regions": regions,
+        "purpose": "burned_text_salvage",
+        "preferred_engine": "lama",
+    }
 
 
 def _probe_video(path: Path, ffmpeg: str) -> tuple[int, int, float]:
@@ -764,24 +788,38 @@ def _probe_video(path: Path, ffmpeg: str) -> tuple[int, int, float]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Re-run burn salvage on one clip.
+    """Re-run burn salvage on one clip. Default engine is LaMa fill.
 
     Examples:
-      python -m workflow.unattended.burn_repair --source CLIP.mp4 --decision decision.json --workdir ./burn_out
-      python -m workflow.unattended.burn_repair --source CLIP.mp4 --plan roi_plan.json --workdir ./burn_out
+      python -m workflow.unattended.burn_repair --source CLIP.mp4 --plan roi_plan.json --model /path/big-lama.pt --workdir ./burn_out
+      python -m workflow.unattended.burn_repair --source CLIP.mp4 --decision decision.json --model /path/big-lama.pt --workdir ./burn_out
     """
     import argparse
 
-    parser = argparse.ArgumentParser(description="Salvage burned-in subtitles (temporal hue+boxblur; delogo fallback)")
+    parser = argparse.ArgumentParser(
+        description="Salvage burned-in subtitles with LaMa fill on a temporal hug-ROI plan"
+    )
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--workdir", type=Path, required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--decision", type=Path, help="screening decision JSON (demote_reason=burn_cut)")
     parser.add_argument("--plan", type=Path, help="ROI plan JSON {regions:[{box:[x,y,w,h], t0, t1}]}")
+    parser.add_argument("--model", type=Path, help="LaMa weights. Default: .runtime/models/big-lama.pt")
+    parser.add_argument("--engine", choices=("lama", "boxblur", "delogo"), default="lama",
+                        help="lama is the look. boxblur/delogo are explicit degraded fallbacks")
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
     parser.add_argument("--duration", type=float)
     args = parser.parse_args(argv)
+    if not args.plan and not args.decision:
+        raise SystemExit("pass --plan or --decision")
+    model: Path | None = None
+    if args.engine == "lama":
+        try:
+            model = resolve_lama_model(args.model)
+        except FileNotFoundError as exc:
+            print(json.dumps({"ok": False, "engine": "lama", "error": str(exc)}, ensure_ascii=False))
+            return 1
     width, height, duration = args.width, args.height, args.duration
     if not (width and height and duration):
         pw, ph, pd = _probe_video(args.source, args.ffmpeg)
@@ -791,17 +829,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.plan:
         plan = json.loads(args.plan.read_text(encoding="utf-8"))
         spec = mask_from_plan(plan, int(width), int(height))
-        out = args.workdir / "salvaged_boxblur.mp4"
-        result = remove_or_blur_burn(args.source, spec, out, ffmpeg=args.ffmpeg, engine="boxblur")
-    elif args.decision:
+        if args.engine == "lama":
+            spec_path = write_mask_spec(spec, args.workdir / "burn_mask_spec.json")
+            result = lama_repair_burn(
+                args.source, spec_path, args.workdir / "lama",
+                model=model, start=0.0, duration=float(duration),
+            )
+        else:
+            out = args.workdir / f"salvaged_{args.engine}.mp4"
+            result = remove_or_blur_burn(args.source, spec, out, ffmpeg=args.ffmpeg, engine=args.engine)
+    else:
         decision = json.loads(args.decision.read_text(encoding="utf-8"))
         result = salvage_demoted_burn(
             decision, args.source,
             width=int(width), height=int(height), duration=float(duration),
             workdir=args.workdir, ffmpeg=args.ffmpeg,
+            engines=(args.engine,), lama_model=model,
         )
-    else:
-        raise SystemExit("pass --plan or --decision")
     print(json.dumps({k: v for k, v in result.items() if k != "cmd"}, ensure_ascii=False, indent=2, default=str))
     return 0 if result.get("ok") or result.get("salvaged") else 1
 

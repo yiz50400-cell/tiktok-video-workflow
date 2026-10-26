@@ -1056,9 +1056,9 @@ def collect_footage(
             clip.screen_grid, clip.screen_times = d.get("screen_grid"), d.get("screen_times") or []
             if clip.screen_times and not decision.get("screen_times"):
                 decision = {**decision, "screen_times": [round(float(t), 2) for t in clip.screen_times]}
-            # IZ 2026-10-26: burned-in text → direct salvage. boxblur (temporal hue+blur)
-            # before delogo — delogo stretches colored subtitle chips. Wrong-product never
-            # reaches this branch.
+            # IZ 2026-10-26: burned-in text → direct salvage. LaMa fill is the look
+            # (gray boxblur is not). Delogo is last because it stretches chips.
+            # Wrong-product never reaches this branch.
             if (
                 not decision.get("accepted")
                 and decision.get("demoted")
@@ -1066,7 +1066,7 @@ def collect_footage(
                 and clip.path
             ):
                 try:
-                    from .burn_repair import salvage_demoted_burn
+                    from .burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
                     salvage_dir = Path(screen_dir) / "burn_salvage" / str(clip.clip_id)
                     decision = salvage_demoted_burn(
                         decision,
@@ -1076,7 +1076,7 @@ def collect_footage(
                         duration=float(clip.duration),
                         workdir=salvage_dir,
                         ffmpeg=ffmpeg,
-                        engines=("boxblur", "delogo"),
+                        engines=DEFAULT_SALVAGE_ENGINES,
                         log=log,
                     )
                     if decision.get("salvaged") and decision.get("salvaged_path"):

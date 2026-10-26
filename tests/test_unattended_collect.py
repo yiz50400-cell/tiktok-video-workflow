@@ -640,7 +640,7 @@ def test_apply_screening_salvages_burn_dominated_instead_of_clean_scraps():
 
 
 def test_boxblur_filter_is_temporal_desat_not_delogo():
-    """Mac 754595 plan: hue=s=0, dual boxblur=10:2, enable=between — not delogo."""
+    """Degraded fallback graph only. The default look is LaMa fill, not this gray bar."""
     from workflow.unattended.burn_repair import (
         MAX_BAND_FRAC,
         UnsafeBurnRoiError,
@@ -732,10 +732,10 @@ def test_proven_temporal_boxblur_encodes(tmp_path):
     assert Path(out["output"]).is_file()
 
 
-def test_salvage_demoted_burn_prefers_boxblur(tmp_path):
+def test_salvage_prefers_lama_fill_over_gray_boxblur(tmp_path):
     from workflow.unattended.burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
     from workflow.unattended.collect import resolve_ffmpeg
-    assert DEFAULT_SALVAGE_ENGINES[0] == "boxblur"
+    assert DEFAULT_SALVAGE_ENGINES == ("lama", "boxblur", "delogo")
     assert DEFAULT_SALVAGE_ENGINES.index("boxblur") < DEFAULT_SALVAGE_ENGINES.index("delogo")
     ffmpeg = resolve_ffmpeg()
     src = tmp_path / "burn.mp4"
@@ -758,13 +758,60 @@ def test_salvage_demoted_burn_prefers_boxblur(tmp_path):
         workdir=tmp_path / "salvage", ffmpeg=ffmpeg,
     )
     assert out["accepted"] and out.get("salvaged")
+    # No LaMa weights in this environment, so fill is attempted and the run
+    # falls through. The delivered file is the fallback, not the chosen look.
     assert out.get("salvage_engine") == "boxblur"
+    assert any("LaMa model missing" in err for err in out.get("salvage_errors") or [])
     assert Path(out["salvaged_path"]).is_file()
     assert out["usable_segments"][0]["end_s"] == 1.0
     spec = out["repair_hint"]["mask_spec"]
-    assert spec["preferred_engine"] == "boxblur"
+    assert spec["preferred_engine"] == "lama"
     assert spec["regions"][0]["box"][3] <= int(round(640 * 0.15))
+    assert "降级" in out["reason"]
     assert "delogo" not in (out.get("reason") or "")
+
+
+def test_temporal_plan_is_active_only_inside_intervals():
+    """LaMa must fill the 754595-style plan only while that chip is on screen."""
+    from workflow.repair.intervals import region_active_at
+    from workflow.unattended.burn_repair import mask_from_plan
+    spec = mask_from_plan({"regions": [
+        {"name": "banner", "box": [47, 730, 482, 48], "t0": 0.00, "t1": 2.50},
+        {"name": "chip_a", "box": [371, 422, 154, 48], "t0": 2.25, "t1": 3.50},
+        {"name": "dia", "box": [248, 725, 104, 60], "t0": 3.25, "t1": 11.50},
+        {"name": "dia_moved", "box": [360, 691, 102, 52], "t0": 11.25, "t1": 13.25},
+    ]}, 576, 1024)
+    assert spec["preferred_engine"] == "lama"
+    by_name = {region["name"]: region for region in spec["regions"]}
+    assert region_active_at(by_name["banner"], 1.0)
+    assert not region_active_at(by_name["chip_a"], 1.0)
+    assert region_active_at(by_name["chip_a"], 2.25)
+    assert region_active_at(by_name["dia"], 8.0)
+    assert not region_active_at(by_name["dia"], 1.0)
+    assert region_active_at(by_name["dia_moved"], 13.25)
+    assert not region_active_at(by_name["dia_moved"], 8.0)
+    # A static box with no interval still covers the whole range.
+    assert region_active_at({"name": "static", "box": [0, 0, 8, 8]}, 4.0)
+
+
+def test_cli_lama_refuses_missing_model(tmp_path, capsys):
+    from workflow.unattended.burn_repair import main
+    plan = tmp_path / "roi_plan.json"
+    plan.write_text(json.dumps({
+        "regions": [{"box": [47, 730, 482, 48], "t0": 0.0, "t1": 2.5}],
+    }), encoding="utf-8")
+    code = main([
+        "--source", "clip.mp4",
+        "--plan", str(plan),
+        "--workdir", str(tmp_path / "out"),
+        "--model", str(tmp_path / "missing-big-lama.pt"),
+        "--width", "576", "--height", "1024", "--duration", "2",
+    ])
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False and payload["engine"] == "lama"
+    assert "LaMa model missing" in payload["error"]
+    assert not (tmp_path / "out" / "salvaged_boxblur.mp4").exists()
 
 
 def test_salvage_skips_wrong_product():
