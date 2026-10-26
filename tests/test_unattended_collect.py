@@ -500,6 +500,8 @@ def test_apply_screening_demotes_all_heavy_burn_without_hard_kill():
     assert "烧录文字过多" not in decision["reason"]
     assert "demote" in decision["reason"]
     assert "硬杀" in decision["reason"]
+    assert decision.get("repair_candidate") is True
+    assert decision.get("repair_regions")
     assert decision["rejected_frames"]["burned_text_heavy"] >= 6
     assert decision["usable_segments"] == []
 
@@ -539,6 +541,289 @@ def test_apply_screening_wrong_product_still_hard_rejects():
     assert decision["accepted"] is False
     assert decision.get("demoted") is False
     assert "不是同款" in decision["reason"]
+
+
+
+def test_mask_spec_from_frames_maps_text_bands():
+    from workflow.unattended.burn_repair import (
+        MAX_BAND_FRAC,
+        band_box,
+        mask_spec_from_frames,
+        text_regions_from_frames,
+    )
+    frames = [
+        {"burned_text": "heavy", "text_region": "bottom"},
+        {"burned_text": "heavy", "text_region": "bottom"},
+        {"burned_text": "small", "text_region": "top"},
+        {"burned_text": "none", "text_region": "none"},
+    ]
+    assert text_regions_from_frames(frames)[0] == "bottom"
+    spec = mask_spec_from_frames(frames, 1080, 1920)
+    assert spec["dimensions"] == [1080, 1920]
+    names = {r["name"] for r in spec["regions"]}
+    assert "burn_bottom" in names and "burn_top" in names
+    bottom = band_box("bottom", 1080, 1920)
+    assert bottom[1] + bottom[3] == 1920
+    # ROI must stay thin — never old 0.26/0.44 face-smear bands
+    assert bottom[3] <= int(round(1920 * MAX_BAND_FRAC))
+    top = band_box("top", 1080, 1920)
+    assert top[3] <= int(round(1920 * MAX_BAND_FRAC))
+    middle = band_box("middle", 1080, 1920)
+    assert middle[3] <= int(round(1920 * MAX_BAND_FRAC))
+    # middle remapped to lower-third, below face center
+    assert middle[1] >= int(round(1920 * 0.55))
+
+
+def test_assert_safe_roi_refuses_tall_and_face_center_boxes():
+    from workflow.unattended.burn_repair import UnsafeBurnRoiError, assert_safe_roi, filter_safe_regions
+    W, H = 1080, 1920
+    # Old middle smear (0.28–0.72) must refuse
+    try:
+        assert_safe_roi([0, int(H * 0.28), W, int(H * 0.44)], W, H, name="old_middle")
+        assert False, "expected UnsafeBurnRoiError"
+    except UnsafeBurnRoiError:
+        pass
+    # Old 26% top band must refuse
+    try:
+        assert_safe_roi([0, 0, W, int(H * 0.26)], W, H, name="old_top")
+        assert False, "expected UnsafeBurnRoiError"
+    except UnsafeBurnRoiError:
+        pass
+    # Thin bottom caption OK
+    ok = assert_safe_roi([0, H - int(H * 0.12), W, int(H * 0.12)], W, H, name="thin_bottom")
+    assert ok[3] <= int(H * 0.15)
+    # filter_safe_regions drops unsafe, keeps safe
+    regions = [
+        {"name": "bad", "mode": "box", "box": [0, int(H * 0.28), W, int(H * 0.44)]},
+        {"name": "good", "mode": "box", "box": [0, H - 200, W, 200]},
+    ]
+    safe = filter_safe_regions(regions, W, H)
+    assert [r["name"] for r in safe] == ["good"]
+
+
+
+
+def test_mask_spec_prefers_tight_text_bbox_over_bands():
+    from workflow.unattended.burn_repair import mask_spec_from_frames
+    frames = [
+        {"burned_text": "heavy", "text_region": "middle",
+         "text_bbox": [250, 737, 90, 46]},
+    ]
+    spec = mask_spec_from_frames(frames, 576, 1024)
+    assert len(spec["regions"]) == 1
+    assert spec["regions"][0]["name"].startswith("burn_bbox_")
+    assert spec["regions"][0]["box"] == [250, 737, 90, 46]
+    # Without bbox, middle alone still yields thin lower-third band (not old 0.44 center)
+    spec2 = mask_spec_from_frames(
+        [{"burned_text": "heavy", "text_region": "middle"}], 576, 1024
+    )
+    box = spec2["regions"][0]["box"]
+    assert box[3] <= int(round(1024 * 0.15))
+    assert box[1] >= int(round(1024 * 0.55))
+
+
+def test_apply_screening_salvages_burn_dominated_instead_of_clean_scraps():
+    """Burn on a majority of frames is direct salvage, not a handful of clean scraps."""
+    times, span = screen_times(15.0)
+    overrides = {
+        i: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": False, "product_prominent": True}
+        for i in range(8)
+    }
+    decision = apply_screening({"same_product": True, "frames": _frames(overrides)}, times, span)
+    assert decision["accepted"] is False
+    assert decision.get("demoted") is True
+    assert decision.get("demote_reason") == "burn_cut"
+    assert decision["usable_segments"] == []
+    assert decision.get("repair_candidate") is True
+    assert "不优先切/躲" in decision["reason"]
+    assert decision["frames"][0]["t"] == times[0]
+
+
+def test_boxblur_filter_is_transparent_not_gray_or_delogo():
+    """Default look: blur original pixels on the hug ROI. No hue, no delogo."""
+    from workflow.unattended.burn_repair import (
+        MAX_BAND_FRAC,
+        UnsafeBurnRoiError,
+        _boxblur_filter_labeled,
+        assert_safe_roi,
+        mask_from_plan,
+    )
+    plan = {"regions": [
+        {"name": "banner", "box": [47, 730, 482, 48], "t0": 0.00, "t1": 2.50},
+        {"name": "chip_a", "box": [371, 422, 154, 48], "t0": 2.25, "t1": 3.50},
+        {"name": "chip_b", "box": [360, 922, 176, 54], "t0": 2.25, "t1": 3.50},
+        {"name": "dia", "box": [248, 725, 104, 60], "t0": 3.25, "t1": 11.50},
+        {"name": "dia_moved", "box": [360, 691, 102, 52], "t0": 11.25, "t1": 13.25},
+    ]}
+    W, H = 576, 1024
+    for item in plan["regions"]:
+        assert_safe_roi(item["box"], W, H, name=item["name"])
+        assert item["box"][3] <= int(round(H * MAX_BAND_FRAC))
+    try:
+        assert_safe_roi([0, 200, W, int(H * 0.44)], W, H, name="tall_union")
+        assert False, "expected UnsafeBurnRoiError"
+    except UnsafeBurnRoiError:
+        pass
+    spec = mask_from_plan(plan, W, H)
+    fc = _boxblur_filter_labeled(spec["regions"], W, H)
+    assert "delogo" not in fc
+    assert "hue" not in fc
+    assert fc.count("boxblur=10:2") == 5
+    assert "overlay=47:730:enable='between(t\\,0.00\\,2.50)'" in fc
+    assert "overlay=371:422:enable='between(t\\,2.25\\,3.50)'" in fc
+    assert "overlay=360:922:enable='between(t\\,2.25\\,3.50)'" in fc
+    assert "overlay=248:725:enable='between(t\\,3.25\\,11.50)'" in fc
+    assert "overlay=360:691:enable='between(t\\,11.25\\,13.25)'" in fc
+
+
+def test_temporal_mask_clusters_moving_bbox_with_overlap():
+    from workflow.unattended.burn_repair import MAX_BAND_FRAC, mask_spec_from_frames
+    W, H = 576, 1024
+    times = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
+    frames = []
+    boxes = {
+        0: [47, 730, 482, 48],
+        1: [50, 732, 470, 46],
+        2: [248, 725, 104, 60],
+        3: [248, 725, 104, 60],
+        4: [250, 726, 100, 58],
+        5: [360, 691, 102, 52],
+    }
+    for i, t in enumerate(times):
+        frames.append({
+            "i": i, "t": t, "burned_text": "heavy", "text_region": "bottom",
+            "text_bbox": boxes[i], "product_visible": True,
+        })
+    spec = mask_spec_from_frames(frames, W, H, times=times, duration=8.0)
+    regions = spec["regions"]
+    assert len(regions) == 3
+    for region in regions:
+        assert region["box"][3] <= int(round(H * MAX_BAND_FRAC))
+        assert region["intervals"]
+    # Stable día track covers the middle samples and does not swallow the moved chip.
+    dia = next(r for r in regions if r["box"][0] < 300 and r["box"][1] >= 700 and r["box"][2] < 200)
+    moved = next(r for r in regions if r["box"][0] >= 300 and r["box"][1] < 750)
+    assert dia["intervals"][0][1] < 6.0
+    assert moved["intervals"][0][0] > 4.0
+    # Handoff overlap is about ROI_OVERLAP_S (0.25), not a full-clip enable.
+    overlap = min(dia["intervals"][-1][1], moved["intervals"][0][1]) - max(dia["intervals"][-1][0], moved["intervals"][0][0])
+    assert 0.15 <= overlap <= 0.4
+
+
+def test_proven_temporal_boxblur_encodes(tmp_path):
+    from workflow.unattended.burn_repair import mask_from_plan, remove_or_blur_burn
+    from workflow.unattended.collect import resolve_ffmpeg
+    ffmpeg = resolve_ffmpeg()
+    src = tmp_path / "chip.mp4"
+    subprocess.run([
+        ffmpeg, "-y", "-f", "lavfi", "-i", "color=c=0xE7C4A8:s=576x1024:d=1",
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-shortest",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src),
+    ], capture_output=True, check=True)
+    spec = mask_from_plan({"regions": [
+        {"box": [47, 730, 482, 48], "t0": 0.0, "t1": 0.4},
+        {"box": [248, 725, 104, 60], "t0": 0.3, "t1": 0.8},
+    ]}, 576, 1024)
+    out = remove_or_blur_burn(src, spec, tmp_path / "out.mp4", ffmpeg=ffmpeg, engine="boxblur")
+    cmd = out["cmd"]
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    assert "boxblur=10:2" in graph
+    assert "hue" not in graph
+    assert "delogo" not in graph
+    assert "enable=" in graph
+    assert Path(out["output"]).is_file()
+
+
+def test_salvage_default_is_transparent_boxblur(tmp_path):
+    from workflow.unattended.burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
+    from workflow.unattended.collect import resolve_ffmpeg
+    assert DEFAULT_SALVAGE_ENGINES[0] == "boxblur"
+    assert "lama" not in DEFAULT_SALVAGE_ENGINES
+    assert DEFAULT_SALVAGE_ENGINES.index("boxblur") < DEFAULT_SALVAGE_ENGINES.index("delogo")
+    ffmpeg = resolve_ffmpeg()
+    src = tmp_path / "burn.mp4"
+    subprocess.run([
+        ffmpeg, "-y", "-f", "lavfi", "-i", "color=c=red:s=320x640:d=1",
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-shortest",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src),
+    ], capture_output=True, check=True)
+    frames = [{"i": i, "t": round((i + 0.5) * 12 / 12, 2), "product_visible": True, "product_prominent": True,
+               "burned_text": "heavy", "text_region": "bottom", "crop_ok": False,
+               "watermark": False, "lifestyle_only": False,
+               "text_bbox": [40, 560, 240, 48]} for i in range(12)]
+    decision = {
+        "accepted": False, "demoted": True, "demote_reason": "burn_cut",
+        "frames": frames, "usable_segments": [], "reason": "demote",
+        "screen_times": [round((i + 0.5), 2) for i in range(12)],
+    }
+    out = salvage_demoted_burn(
+        decision, src, width=320, height=640, duration=1.0,
+        workdir=tmp_path / "salvage", ffmpeg=ffmpeg,
+    )
+    assert out["accepted"] and out.get("salvaged")
+    assert out.get("salvage_engine") == "boxblur"
+    assert not out.get("salvage_errors")
+    assert Path(out["salvaged_path"]).is_file()
+    assert out["usable_segments"][0]["end_s"] == 1.0
+    spec = out["repair_hint"]["mask_spec"]
+    assert spec["preferred_engine"] == "boxblur"
+    assert spec["regions"][0]["box"][3] <= int(round(640 * 0.15))
+    assert "透明模糊" in out["reason"]
+    assert "delogo" not in (out.get("reason") or "")
+
+
+def test_temporal_plan_is_active_only_inside_intervals():
+    """A timed ROI is active only while that chip is on screen."""
+    from workflow.repair.intervals import region_active_at
+    from workflow.unattended.burn_repair import mask_from_plan
+    spec = mask_from_plan({"regions": [
+        {"name": "banner", "box": [47, 730, 482, 48], "t0": 0.00, "t1": 2.50},
+        {"name": "chip_a", "box": [371, 422, 154, 48], "t0": 2.25, "t1": 3.50},
+        {"name": "dia", "box": [248, 725, 104, 60], "t0": 3.25, "t1": 11.50},
+        {"name": "dia_moved", "box": [360, 691, 102, 52], "t0": 11.25, "t1": 13.25},
+    ]}, 576, 1024)
+    assert spec["preferred_engine"] == "boxblur"
+    by_name = {region["name"]: region for region in spec["regions"]}
+    assert region_active_at(by_name["banner"], 1.0)
+    assert not region_active_at(by_name["chip_a"], 1.0)
+    assert region_active_at(by_name["chip_a"], 2.25)
+    assert region_active_at(by_name["dia"], 8.0)
+    assert not region_active_at(by_name["dia"], 1.0)
+    assert region_active_at(by_name["dia_moved"], 13.25)
+    assert not region_active_at(by_name["dia_moved"], 8.0)
+    # A static box with no interval still covers the whole range.
+    assert region_active_at({"name": "static", "box": [0, 0, 8, 8]}, 4.0)
+
+
+def test_cli_lama_refuses_missing_model(tmp_path, capsys):
+    from workflow.unattended.burn_repair import main
+    plan = tmp_path / "roi_plan.json"
+    plan.write_text(json.dumps({
+        "regions": [{"box": [47, 730, 482, 48], "t0": 0.0, "t1": 2.5}],
+    }), encoding="utf-8")
+    code = main([
+        "--source", "clip.mp4",
+        "--plan", str(plan),
+        "--workdir", str(tmp_path / "out"),
+        "--engine", "lama",
+        "--model", str(tmp_path / "missing-big-lama.pt"),
+        "--width", "576", "--height", "1024", "--duration", "2",
+    ])
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False and payload["engine"] == "lama"
+    assert "LaMa model missing" in payload["error"]
+    assert not (tmp_path / "out" / "salvaged_boxblur.mp4").exists()
+
+
+def test_salvage_skips_wrong_product():
+    from workflow.unattended.burn_repair import salvage_demoted_burn
+    decision = {"accepted": False, "demoted": False, "reason": "不是同款商品类型/形态：x", "frames": []}
+    out = salvage_demoted_burn(
+        decision, Path("/nope.mp4"), width=100, height=200, duration=1.0,
+        workdir=Path("/tmp"), ffmpeg="ffmpeg", engines=("delogo",),
+    )
+    assert not out.get("salvaged") and not out.get("accepted")
 
 
 def test_collect_runs_supplement_round_when_screening_insufficient(tmp_path):
