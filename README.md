@@ -4,7 +4,7 @@
 
 当前范围到成片、独立字幕、中文说明和本机交付包结束；紫鸟、TikTok Studio、上传、草稿、挂商品和发布由员工自行手动完成。交付采用 GitHub 源码下载与本机部署。
 
-客户用一句话说清商品、市场、数量和风格（可附素材路径）。无人值守自动采集/混剪、内部本地化与复核、配音剪辑并写入 `delivery/`。仅当客户**明确要求**对话精修时，才走员工交互审稿。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
+客户用一句话说清商品、市场、数量和风格（可附素材路径）。无人值守自动采集/混剪、内部本地化与复核、配音剪辑并写入 `delivery/`。仅当客户**明确要求**对话精修时，才走员工交互审稿。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，可选 Docker+Evil 加厚发现见[Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
 
 
 ## 获取源码
@@ -66,6 +66,10 @@ uv pip install --python .venv/bin/python -r requirements.lock.txt -r requirement
 `config/codex-mcp.example.toml` 是待合并的配置样例；全局 Codex 配置尚未改变。MCP 使用 `.runtime/access.token` 本机凭据，通过同一 API 创建/查询/导入。公司 skill 位于 `skills/team-video-workflow/SKILL.md`，现有 `mexico-tiktok-product-editor` 保持原样。
 
 旧网页原型与 Electron 桌面壳已移入本机 `_archive/`，不进入源码仓库；Windows 安装包路线已停止（见 [历史归档](docs/Windows桌面交付-2026-10-14.md)）。默认业务服务返回 headless 状态。
+
+## 可选：Docker + Evil0ctal（采集旁路）
+
+默认采集仍是 Codex web search → yt-dlp，**不必**安装。若要在客户机自建 Evil0ctal（guest+browser）加厚 TikTok URL 发现，再把 URL 列表交给既有 yt-dlp/初筛，见 [Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)。此旁路不改变主仓默认发现代码。
 
 ## Windows 源码部署
 
