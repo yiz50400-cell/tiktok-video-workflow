@@ -11,7 +11,9 @@ Blur the original pixels in place so the subtitle is unreadable. No hue
 desaturation and no gray/color-block overlay. LaMa is optional later, not this
 look gate. Delogo is last because it stretches colored chips.
 
-Recipe: crop=W:H:X:Y,boxblur=10:2,overlay=X:Y:enable='between(t,t0,t1)'
+Recipe (approved roi_sample_transparent): crop the hug ROI, then
+boxblur=10:2,boxblur=10:2 on those original pixels (no hue), then
+overlay=X:Y:enable='between(t,t0,t1)'.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ MAX_FACE_OVERLAP_FRAC = 0.08  # max overlap with face zone vs frame height
 DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
 # Transparent blur first. LaMa is not in this gate. Delogo is last (it stretches).
 DEFAULT_SALVAGE_ENGINES = ("boxblur", "delogo")
-# Blur the ROI's own pixels. Power 2 is ffmpeg's repeat count, not a second color pass.
+# Approved sample: two passes of boxblur=10:2. Power 2 is ffmpeg's inner repeat.
 TRANSPARENT_BLUR_RADIUS = 10
 TRANSPARENT_BLUR_POWER = 2
 # Neighboring ROIs overlap so glyphs do not flash in the handoff gap.
@@ -473,7 +475,7 @@ def repair_hint_from_decision(
         "needs_visual_review": True,
         "note": (
             "burned-in text → direct temporal salvage. Look is transparent blur "
-            "(boxblur=10:2 on the original pixels, no hue). LaMa is optional later. "
+            "(boxblur=10:2,boxblur=10:2 on the original pixels, no hue). LaMa is optional later. "
             "delogo is last resort (stretch). not cut/dodge-first"
         ),
     }
@@ -520,13 +522,14 @@ def _enable_clause(region: dict[str, Any]) -> str:
 
 
 def _boxblur_steps(w: int, h: int) -> str:
-    """Transparent blur: one boxblur of the ROI's own pixels. No hue.
+    """Approved transparent blur: boxblur twice on the ROI's own pixels. No hue.
 
-    ``boxblur=10:2`` is radius 10, power 2. Desaturation is what painted the
-    gray bars IZ banned.
+    Each pass is ``boxblur=10:2`` (radius 10, power 2). ``hue=s=0`` is what
+    painted the gray bars IZ banned.
     """
     radius = min(TRANSPARENT_BLUR_RADIUS, max(1, min(int(w), int(h)) - 1))
-    return f"boxblur={radius}:{TRANSPARENT_BLUR_POWER}"
+    step = f"boxblur={radius}:{TRANSPARENT_BLUR_POWER}"
+    return f"{step},{step}"
 
 
 def _delogo_filter(regions: list[dict[str, Any]], width: int, height: int) -> str:
@@ -538,7 +541,7 @@ def _delogo_filter(regions: list[dict[str, Any]], width: int, height: int) -> st
 
 
 def _boxblur_filter_labeled(regions: list[dict[str, Any]], width: int = 0, height: int = 0) -> str:
-    """Temporal hug-ROI: boxblur=10:2 of the original pixels, overlay enable=between(t,t0,t1)."""
+    """Temporal hug-ROI: boxblur=10:2,boxblur=10:2, overlay enable=between(t,t0,t1). No hue."""
     n = len(regions)
     splits = "".join(f"[s{i}]" for i in range(n))
     filters = [f"[0:v]split={n + 1}[base]{splits}"]

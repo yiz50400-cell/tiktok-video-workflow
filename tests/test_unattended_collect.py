@@ -668,7 +668,7 @@ def test_boxblur_filter_is_transparent_not_gray_or_delogo():
     fc = _boxblur_filter_labeled(spec["regions"], W, H)
     assert "delogo" not in fc
     assert "hue" not in fc
-    assert fc.count("boxblur=10:2") == 5
+    assert fc.count("boxblur=10:2,boxblur=10:2") == 5
     assert "overlay=47:730:enable='between(t\\,0.00\\,2.50)'" in fc
     assert "overlay=371:422:enable='between(t\\,2.25\\,3.50)'" in fc
     assert "overlay=360:922:enable='between(t\\,2.25\\,3.50)'" in fc
@@ -727,7 +727,7 @@ def test_proven_temporal_boxblur_encodes(tmp_path):
     out = remove_or_blur_burn(src, spec, tmp_path / "out.mp4", ffmpeg=ffmpeg, engine="boxblur")
     cmd = out["cmd"]
     graph = cmd[cmd.index("-filter_complex") + 1]
-    assert "boxblur=10:2" in graph
+    assert "boxblur=10:2,boxblur=10:2" in graph
     assert "hue" not in graph
     assert "delogo" not in graph
     assert "enable=" in graph
