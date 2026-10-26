@@ -167,8 +167,8 @@ def _burn_dominated(rejected_frames: dict[str, int]) -> bool:
 def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: float) -> dict[str, Any]:
     """Turn one clip's vision verdict into accept/reject + usable segments.
 
-    Binding (IZ): burned-in source text must NOT whole-reject — cut around text frames /
-    demote. Wrong-product still hard-rejects. Prefer clean (no burn) segments for the pool.
+    Binding (IZ/Yang): (1) cut/dodge clean segments first; (2) else remove/blur like watermark
+    repair; (3) wrong-product hard-kills. Prefer clean segments for the pool.
     """
     if not isinstance(verdict, dict):
         return {"accepted": False, "demoted": False, "reason": "视觉初筛无结果", "usable_segments": [], "frames": []}
@@ -215,16 +215,20 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
     if not segments:
         # Soft demote when burn-in left no clean window; never treat as wrong-product hard kill.
         if _burn_dominated(rejected_frames):
+            from .burn_repair import text_regions_from_frames
+            regions = text_regions_from_frames(list(by_index.values()))
             return {
                 **base,
                 "accepted": False,
                 "demoted": True,
                 "demote_reason": "burn_cut",
+                "repair_candidate": True,
+                "repair_regions": regions,
                 "usable_segments": [],
                 "reason": (
                     f"烧录文字切/躲后无净段（heavy={rejected_frames['burned_text_heavy']}, "
                     f"burned={rejected_frames['burned_text']}/{max(len(by_index), 1)}，"
-                    f"帧问题 {rejected_frames}）— demote，非错品硬杀"
+                    f"帧问题 {rejected_frames}）— demote，可走去水印同款 remove/blur；非错品硬杀"
                 ),
             }
         return {

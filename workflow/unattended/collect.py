@@ -1054,12 +1054,40 @@ def collect_footage(
                 "accepted": False, "reason": "无初筛结果", "usable_segments": [],
             }
             clip.screen_grid, clip.screen_times = d.get("screen_grid"), d.get("screen_times") or []
+            # Yang/IZ: cut/dodge first; if demoted burn → remove/blur salvage (watermark spirit).
+            if (
+                not decision.get("accepted")
+                and decision.get("demoted")
+                and decision.get("demote_reason") == "burn_cut"
+                and clip.path
+            ):
+                try:
+                    from .burn_repair import salvage_demoted_burn
+                    salvage_dir = Path(screen_dir) / "burn_salvage" / str(clip.clip_id)
+                    decision = salvage_demoted_burn(
+                        decision,
+                        Path(clip.path),
+                        width=int(clip.width),
+                        height=int(clip.height),
+                        duration=float(clip.duration),
+                        workdir=salvage_dir,
+                        ffmpeg=ffmpeg,
+                        engines=("delogo", "boxblur"),
+                        log=log,
+                    )
+                    if decision.get("salvaged") and decision.get("salvaged_path"):
+                        clip.path = str(decision["salvaged_path"])
+                        clip.watermark_status = f"burn_salvaged:{decision.get('salvage_engine')}"
+                except Exception as exc:
+                    log(f"  烧录 salvage 异常 {clip.clip_id}：{exc}")
+                    decision = {**decision, "salvage_attempted": True, "salvage_errors": [str(exc)]}
             clip.usable_segments = decision.get("usable_segments") or []
             clip.screening = {k: v for k, v in decision.items() if k != "usable_segments"}
             cand = next((c for c in all_candidates if c.video_id == clip.clip_id), None)
             if decision.get("accepted"):
                 kept.append(clip)
-                log(f"  初筛通过 {clip.clip_id}：可用片段 {[(s['start_s'], s['end_s'], s['product_prominent']) for s in clip.usable_segments]}")
+                tag = "（burn salvage）" if decision.get("salvaged") else ""
+                log(f"  初筛通过 {clip.clip_id}{tag}：可用片段 {[(s['start_s'], s['end_s'], s['product_prominent']) for s in clip.usable_segments]}")
             else:
                 state["screened_out"].append(clip)
                 rejections.append(f"{clip.clip_id}（@{cand.account if cand else ''}）：{decision.get('reason')}")

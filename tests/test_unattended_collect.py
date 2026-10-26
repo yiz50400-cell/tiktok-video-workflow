@@ -500,6 +500,8 @@ def test_apply_screening_demotes_all_heavy_burn_without_hard_kill():
     assert "烧录文字过多" not in decision["reason"]
     assert "demote" in decision["reason"]
     assert "硬杀" in decision["reason"]
+    assert decision.get("repair_candidate") is True
+    assert decision.get("repair_regions")
     assert decision["rejected_frames"]["burned_text_heavy"] >= 6
     assert decision["usable_segments"] == []
 
@@ -539,6 +541,61 @@ def test_apply_screening_wrong_product_still_hard_rejects():
     assert decision["accepted"] is False
     assert decision.get("demoted") is False
     assert "不是同款" in decision["reason"]
+
+
+
+def test_mask_spec_from_frames_maps_text_bands():
+    from workflow.unattended.burn_repair import band_box, mask_spec_from_frames, text_regions_from_frames
+    frames = [
+        {"burned_text": "heavy", "text_region": "bottom"},
+        {"burned_text": "heavy", "text_region": "bottom"},
+        {"burned_text": "small", "text_region": "top"},
+        {"burned_text": "none", "text_region": "none"},
+    ]
+    assert text_regions_from_frames(frames)[0] == "bottom"
+    spec = mask_spec_from_frames(frames, 1080, 1920)
+    assert spec["dimensions"] == [1080, 1920]
+    names = {r["name"] for r in spec["regions"]}
+    assert "burn_bottom" in names and "burn_top" in names
+    bottom = band_box("bottom", 1080, 1920)
+    assert bottom[1] + bottom[3] == 1920
+
+
+def test_salvage_demoted_burn_delogo(tmp_path):
+    from workflow.unattended.burn_repair import salvage_demoted_burn
+    from workflow.unattended.collect import resolve_ffmpeg
+    ffmpeg = resolve_ffmpeg()
+    src = tmp_path / "burn.mp4"
+    subprocess.run([
+        ffmpeg, "-y", "-f", "lavfi", "-i", "color=c=red:s=320x640:d=1",
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-shortest",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src),
+    ], capture_output=True, check=True)
+    frames = [{"i": i, "product_visible": True, "product_prominent": True,
+               "burned_text": "heavy", "text_region": "bottom", "crop_ok": False,
+               "watermark": False, "lifestyle_only": False} for i in range(12)]
+    decision = {
+        "accepted": False, "demoted": True, "demote_reason": "burn_cut",
+        "frames": frames, "usable_segments": [], "reason": "demote",
+    }
+    out = salvage_demoted_burn(
+        decision, src, width=320, height=640, duration=1.0,
+        workdir=tmp_path / "salvage", ffmpeg=ffmpeg, engines=("delogo", "boxblur"),
+    )
+    assert out["accepted"] and out.get("salvaged")
+    assert out.get("salvage_engine") in ("delogo", "boxblur")
+    assert Path(out["salvaged_path"]).is_file()
+    assert out["usable_segments"][0]["end_s"] == 1.0
+
+
+def test_salvage_skips_wrong_product():
+    from workflow.unattended.burn_repair import salvage_demoted_burn
+    decision = {"accepted": False, "demoted": False, "reason": "不是同款商品类型/形态：x", "frames": []}
+    out = salvage_demoted_burn(
+        decision, Path("/nope.mp4"), width=100, height=200, duration=1.0,
+        workdir=Path("/tmp"), ffmpeg="ffmpeg", engines=("delogo",),
+    )
+    assert not out.get("salvaged") and not out.get("accepted")
 
 
 def test_collect_runs_supplement_round_when_screening_insufficient(tmp_path):
