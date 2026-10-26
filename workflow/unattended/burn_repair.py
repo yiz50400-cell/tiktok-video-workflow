@@ -275,7 +275,10 @@ def salvage_demoted_burn(
             salvaged = Path(result["output"])
             if not salvaged.is_file():
                 raise RuntimeError("missing salvaged file")
-            prominent = any(bool(f.get("product_prominent")) for f in frames) or True
+            if frames:
+                prominent = any(bool(f.get("product_prominent")) for f in frames)
+            else:
+                prominent = True
             updated = {
                 **decision,
                 "accepted": True,
