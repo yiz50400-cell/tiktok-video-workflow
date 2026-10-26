@@ -1056,8 +1056,8 @@ def collect_footage(
             clip.screen_grid, clip.screen_times = d.get("screen_grid"), d.get("screen_times") or []
             if clip.screen_times and not decision.get("screen_times"):
                 decision = {**decision, "screen_times": [round(float(t), 2) for t in clip.screen_times]}
-            # IZ 2026-10-26: burned-in text → direct salvage. LaMa fill is the look
-            # (gray boxblur is not). Delogo is last because it stretches chips.
+            # IZ 2026-10-26: burned-in text → direct salvage. Look is transparent
+            # blur (original pixels, no hue). LaMa is not this gate. Delogo is last.
             # Wrong-product never reaches this branch.
             if (
                 not decision.get("accepted")

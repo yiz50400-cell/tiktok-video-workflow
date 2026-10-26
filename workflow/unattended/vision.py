@@ -3,7 +3,7 @@
 * ``screen_clips``  — BEFORE editing: per clip, check 12 sampled frames for same product
   type / form factor, burned-in source text, watermarks and lifestyle-only frames, and derive
   ``usable_segments`` (only these may be cut into the timeline). Burned-in text is direct
-  salvage (tight temporal LaMa fill), not cut/dodge-first; wrong-product still hard-kills.
+  salvage (tight temporal transparent blur), not cut/dodge-first; wrong-product still hard-kills.
 * ``check_shots``   — after editing (deterministic): every shot lies inside a usable segment,
   hook and final CTA shots come from product-prominent segments.
 * ``review_export`` — AFTER export: sample one frame per shot from the finished video and
@@ -200,8 +200,8 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
     """Turn one clip's vision verdict into accept/reject + usable segments.
 
     Binding (IZ/Yang 2026-10-26): burned-in source text is direct salvage
-    (temporal LaMa fill), not cut/dodge-first. Burn-dominated clips are demoted
-    for salvage even if a few clean frames remain. Wrong-product still hard-kills.
+    (temporal transparent blur), not cut/dodge-first. Burn-dominated clips are
+    demoted for salvage even if a few clean frames remain. Wrong-product still hard-kills.
     ROI safety lives in burn_repair (hug subtitle bbox; no tall/face smear).
     """
     if not isinstance(verdict, dict):
@@ -265,7 +265,7 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
                 "reason": (
                     f"烧录文字直接 salvage（heavy={rejected_frames['burned_text_heavy']}, "
                     f"burned={rejected_frames['burned_text']}/{max(len(by_index), 1)}，"
-                    f"帧问题 {rejected_frames}）— demote，LaMa 填补去字，不优先切/躲；非错品硬杀"
+                    f"帧问题 {rejected_frames}）— demote，透明模糊去字，不优先切/躲；非错品硬杀"
                 ),
             }
         return {

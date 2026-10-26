@@ -6,13 +6,12 @@ IZ/Yang (2026-10-26):
   3) ROI hugs the subtitle/text bbox only (MAX_BAND_FRAC, assert_safe_roi).
      Ban tall / full-frame / face smear (v5b cream smear).
 
-Look: fill / inpaint (LaMa) so the text is gone and skin stays natural.
-IZ rejected gray soft boxblur bars (roi_sample_fix) — those are not the default
-final look. Engine order is lama, then boxblur only if the weights are missing,
-then delogo last because its border interpolation stretches colored chips.
+Look (IZ, supersedes LaMa-first and gray bars): transparent blur on the hug ROI.
+Blur the original pixels in place so the subtitle is unreadable. No hue
+desaturation and no gray/color-block overlay. LaMa is optional later, not this
+look gate. Delogo is last because it stretches colored chips.
 
-Temporal ROI plans carry intervals. LaMa paints a box only inside those
-intervals (workflow.repair.intervals). Outputs need visual review.
+Recipe: crop=W:H:X:Y,boxblur=10:2,overlay=X:Y:enable='between(t,t0,t1)'
 """
 
 from __future__ import annotations
@@ -33,11 +32,11 @@ FACE_ZONE_Y0 = 0.18
 FACE_ZONE_Y1 = 0.55
 MAX_FACE_OVERLAP_FRAC = 0.08  # max overlap with face zone vs frame height
 DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
-# Fill first. Gray boxblur is a degraded fallback. Delogo is last (it stretches).
-DEFAULT_SALVAGE_ENGINES = ("lama", "boxblur", "delogo")
-# Mac 754595: radius 10, power 2, applied twice after desaturating the ROI.
-PROVEN_BLUR_RADIUS = 10
-PROVEN_BLUR_POWER = 2
+# Transparent blur first. LaMa is not in this gate. Delogo is last (it stretches).
+DEFAULT_SALVAGE_ENGINES = ("boxblur", "delogo")
+# Blur the ROI's own pixels. Power 2 is ffmpeg's repeat count, not a second color pass.
+TRANSPARENT_BLUR_RADIUS = 10
+TRANSPARENT_BLUR_POWER = 2
 # Neighboring ROIs overlap so glyphs do not flash in the handoff gap.
 ROI_OVERLAP_S = 0.25
 TRACK_IOU = 0.45
@@ -415,7 +414,7 @@ def mask_spec_from_frames(
             "dimensions": [width, height],
             "regions": timed,
             "purpose": "burned_text_salvage",
-            "preferred_engine": "lama",
+            "preferred_engine": "boxblur",
         }
     # Fallback: thin top/bottom/lower-third bands (never a tall center box).
     selected = list(regions or text_regions_from_frames(frames))
@@ -444,7 +443,7 @@ def mask_spec_from_frames(
         "dimensions": [width, height],
         "regions": boxes,
         "purpose": "burned_text_salvage",
-        "preferred_engine": "lama",
+        "preferred_engine": "boxblur",
     }
 
 
@@ -473,9 +472,9 @@ def repair_hint_from_decision(
         "mask_spec": spec,
         "needs_visual_review": True,
         "note": (
-            "burned-in text → direct temporal salvage. Final look is LaMa fill "
-            "inside hug-ROI intervals (text gone, skin kept). Gray boxblur is not "
-            "the default look. delogo is last resort (stretch). not cut/dodge-first"
+            "burned-in text → direct temporal salvage. Look is transparent blur "
+            "(boxblur=10:2 on the original pixels, no hue). LaMa is optional later. "
+            "delogo is last resort (stretch). not cut/dodge-first"
         ),
     }
 
@@ -521,14 +520,13 @@ def _enable_clause(region: dict[str, Any]) -> str:
 
 
 def _boxblur_steps(w: int, h: int) -> str:
-    """Degraded fallback only — IZ rejected this gray bar as the final look.
+    """Transparent blur: one boxblur of the ROI's own pixels. No hue.
 
-    Kept so a missing LaMa weight can still cover text. Radius 10, twice,
-    after desaturate. Not the default salvage engine.
+    ``boxblur=10:2`` is radius 10, power 2. Desaturation is what painted the
+    gray bars IZ banned.
     """
-    radius = min(PROVEN_BLUR_RADIUS, max(1, min(int(w), int(h)) - 1))
-    step = f"boxblur={radius}:{PROVEN_BLUR_POWER}"
-    return f"hue=s=0,{step},{step}"
+    radius = min(TRANSPARENT_BLUR_RADIUS, max(1, min(int(w), int(h)) - 1))
+    return f"boxblur={radius}:{TRANSPARENT_BLUR_POWER}"
 
 
 def _delogo_filter(regions: list[dict[str, Any]], width: int, height: int) -> str:
@@ -540,7 +538,7 @@ def _delogo_filter(regions: list[dict[str, Any]], width: int, height: int) -> st
 
 
 def _boxblur_filter_labeled(regions: list[dict[str, Any]], width: int = 0, height: int = 0) -> str:
-    """Temporal hug-ROI: hue=s=0 + dual boxblur=10:2 + overlay enable=between(t,t0,t1)."""
+    """Temporal hug-ROI: boxblur=10:2 of the original pixels, overlay enable=between(t,t0,t1)."""
     n = len(regions)
     splits = "".join(f"[s{i}]" for i in range(n))
     filters = [f"[0:v]split={n + 1}[base]{splits}"]
@@ -735,9 +733,9 @@ def salvage_demoted_burn(
                 "reason": (
                     "烧录文字直接 salvage："
                     + (
-                        "LaMa 填补去字（贴 ROI，皮肤保留，需目视复核）"
-                        if (result.get("engine") or engine) == "lama"
-                        else f"{result.get('engine') or engine} 降级（LaMa 未用上，需目视复核）"
+                        "透明模糊（原像素 boxblur，贴 ROI，需目视复核）"
+                        if (result.get("engine") or engine) == "boxblur"
+                        else f"{result.get('engine') or engine}（非默认定稿，需目视复核）"
                     )
                 ),
                 "repair_hint": hint,
@@ -774,7 +772,7 @@ def mask_from_plan(plan: dict[str, Any], width: int, height: int) -> dict[str, A
         "dimensions": [int(width), int(height)],
         "regions": regions,
         "purpose": "burned_text_salvage",
-        "preferred_engine": "lama",
+        "preferred_engine": "boxblur",
     }
 
 
@@ -788,16 +786,16 @@ def _probe_video(path: Path, ffmpeg: str) -> tuple[int, int, float]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Re-run burn salvage on one clip. Default engine is LaMa fill.
+    """Re-run burn salvage on one clip. Default is transparent blur.
 
     Examples:
-      python -m workflow.unattended.burn_repair --source CLIP.mp4 --plan roi_plan.json --model /path/big-lama.pt --workdir ./burn_out
-      python -m workflow.unattended.burn_repair --source CLIP.mp4 --decision decision.json --model /path/big-lama.pt --workdir ./burn_out
+      python -m workflow.unattended.burn_repair --source CLIP.mp4 --plan roi_plan.json --workdir ./burn_out
+      python -m workflow.unattended.burn_repair --source CLIP.mp4 --decision decision.json --workdir ./burn_out
     """
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Salvage burned-in subtitles with LaMa fill on a temporal hug-ROI plan"
+        description="Salvage burned-in subtitles with transparent boxblur on a temporal hug-ROI plan"
     )
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--workdir", type=Path, required=True)
@@ -805,8 +803,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--decision", type=Path, help="screening decision JSON (demote_reason=burn_cut)")
     parser.add_argument("--plan", type=Path, help="ROI plan JSON {regions:[{box:[x,y,w,h], t0, t1}]}")
     parser.add_argument("--model", type=Path, help="LaMa weights. Default: .runtime/models/big-lama.pt")
-    parser.add_argument("--engine", choices=("lama", "boxblur", "delogo"), default="lama",
-                        help="lama is the look. boxblur/delogo are explicit degraded fallbacks")
+    parser.add_argument("--engine", choices=("boxblur", "delogo", "lama"), default="boxblur",
+                        help="boxblur is transparent blur (the look). lama is optional; delogo is last")
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
     parser.add_argument("--duration", type=float)

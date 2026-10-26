@@ -21,7 +21,7 @@
    - burned_text：原片烧录的字幕/贴纸文字/标题条/价格优惠信息（**含英文、葡语、西语等任何可读字母字幕**；不算商品包装上本来印的品牌字）："none" / "small"（角落小字）/ "heavy"（明显字幕、大字、多行口播字幕）。只要有任何可读的烧录文字就不要填 none；英文口播字幕/大标题一律 heavy。
    - text_region：烧录文字所在区域 "top"（画面上 1/4 内）/ "bottom"（下 1/4 内）/ "middle"（中间或大面积）/ "none"；
    - crop_ok：仅当 burned_text=small 且文字在 top/bottom 时，若裁掉该约 26% 后商品仍完整清楚才填 true；**heavy 一律 crop_ok=false**（中间或大面积文字也 false）。
-   - **烧录文字**：下游对烧录字幕直接 salvage（贴文字框、按时间段用填补去字，不是灰打码条），不优先切/躲，也不整条当错品废掉。请如实标每帧 burned_text、text_region；能判断位置时加 text_bbox（相对该帧整幅画面的 0–1 小数 [x, y, w, h]，只包住文字，不要框整张脸或整幅画面）。同一帧有多块文字时可给 text_bboxes 数组。错品（same_product=false）仍整条硬杀。
+   - **烧录文字**：下游对烧录字幕直接 salvage（贴文字框、按时间段做透明模糊，看不清字即可，不要灰/色块打码），不优先切/躲，也不整条当错品废掉。请如实标每帧 burned_text、text_region；能判断位置时加 text_bbox（相对该帧整幅画面的 0–1 小数 [x, y, w, h]，只包住文字，不要框整张脸或整幅画面）。同一帧有多块文字时可给 text_bboxes 数组。错品（same_product=false）仍整条硬杀。
    - watermark：TikTok logo/用户名水印、其它平台或网站水印；
    - lifestyle_only：只有人物/风景/生活方式，商品看不清或不在画面中心（例如海边自拍、人物摆拍）。
 

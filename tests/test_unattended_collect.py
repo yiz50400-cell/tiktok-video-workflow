@@ -639,8 +639,8 @@ def test_apply_screening_salvages_burn_dominated_instead_of_clean_scraps():
     assert decision["frames"][0]["t"] == times[0]
 
 
-def test_boxblur_filter_is_temporal_desat_not_delogo():
-    """Degraded fallback graph only. The default look is LaMa fill, not this gray bar."""
+def test_boxblur_filter_is_transparent_not_gray_or_delogo():
+    """Default look: blur original pixels on the hug ROI. No hue, no delogo."""
     from workflow.unattended.burn_repair import (
         MAX_BAND_FRAC,
         UnsafeBurnRoiError,
@@ -667,7 +667,8 @@ def test_boxblur_filter_is_temporal_desat_not_delogo():
     spec = mask_from_plan(plan, W, H)
     fc = _boxblur_filter_labeled(spec["regions"], W, H)
     assert "delogo" not in fc
-    assert fc.count("hue=s=0,boxblur=10:2,boxblur=10:2") == 5
+    assert "hue" not in fc
+    assert fc.count("boxblur=10:2") == 5
     assert "overlay=47:730:enable='between(t\\,0.00\\,2.50)'" in fc
     assert "overlay=371:422:enable='between(t\\,2.25\\,3.50)'" in fc
     assert "overlay=360:922:enable='between(t\\,2.25\\,3.50)'" in fc
@@ -726,16 +727,18 @@ def test_proven_temporal_boxblur_encodes(tmp_path):
     out = remove_or_blur_burn(src, spec, tmp_path / "out.mp4", ffmpeg=ffmpeg, engine="boxblur")
     cmd = out["cmd"]
     graph = cmd[cmd.index("-filter_complex") + 1]
-    assert "hue=s=0,boxblur=10:2,boxblur=10:2" in graph
+    assert "boxblur=10:2" in graph
+    assert "hue" not in graph
     assert "delogo" not in graph
     assert "enable=" in graph
     assert Path(out["output"]).is_file()
 
 
-def test_salvage_prefers_lama_fill_over_gray_boxblur(tmp_path):
+def test_salvage_default_is_transparent_boxblur(tmp_path):
     from workflow.unattended.burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
     from workflow.unattended.collect import resolve_ffmpeg
-    assert DEFAULT_SALVAGE_ENGINES == ("lama", "boxblur", "delogo")
+    assert DEFAULT_SALVAGE_ENGINES[0] == "boxblur"
+    assert "lama" not in DEFAULT_SALVAGE_ENGINES
     assert DEFAULT_SALVAGE_ENGINES.index("boxblur") < DEFAULT_SALVAGE_ENGINES.index("delogo")
     ffmpeg = resolve_ffmpeg()
     src = tmp_path / "burn.mp4"
@@ -758,21 +761,19 @@ def test_salvage_prefers_lama_fill_over_gray_boxblur(tmp_path):
         workdir=tmp_path / "salvage", ffmpeg=ffmpeg,
     )
     assert out["accepted"] and out.get("salvaged")
-    # No LaMa weights in this environment, so fill is attempted and the run
-    # falls through. The delivered file is the fallback, not the chosen look.
     assert out.get("salvage_engine") == "boxblur"
-    assert any("LaMa model missing" in err for err in out.get("salvage_errors") or [])
+    assert not out.get("salvage_errors")
     assert Path(out["salvaged_path"]).is_file()
     assert out["usable_segments"][0]["end_s"] == 1.0
     spec = out["repair_hint"]["mask_spec"]
-    assert spec["preferred_engine"] == "lama"
+    assert spec["preferred_engine"] == "boxblur"
     assert spec["regions"][0]["box"][3] <= int(round(640 * 0.15))
-    assert "降级" in out["reason"]
+    assert "透明模糊" in out["reason"]
     assert "delogo" not in (out.get("reason") or "")
 
 
 def test_temporal_plan_is_active_only_inside_intervals():
-    """LaMa must fill the 754595-style plan only while that chip is on screen."""
+    """A timed ROI is active only while that chip is on screen."""
     from workflow.repair.intervals import region_active_at
     from workflow.unattended.burn_repair import mask_from_plan
     spec = mask_from_plan({"regions": [
@@ -781,7 +782,7 @@ def test_temporal_plan_is_active_only_inside_intervals():
         {"name": "dia", "box": [248, 725, 104, 60], "t0": 3.25, "t1": 11.50},
         {"name": "dia_moved", "box": [360, 691, 102, 52], "t0": 11.25, "t1": 13.25},
     ]}, 576, 1024)
-    assert spec["preferred_engine"] == "lama"
+    assert spec["preferred_engine"] == "boxblur"
     by_name = {region["name"]: region for region in spec["regions"]}
     assert region_active_at(by_name["banner"], 1.0)
     assert not region_active_at(by_name["chip_a"], 1.0)
@@ -804,6 +805,7 @@ def test_cli_lama_refuses_missing_model(tmp_path, capsys):
         "--source", "clip.mp4",
         "--plan", str(plan),
         "--workdir", str(tmp_path / "out"),
+        "--engine", "lama",
         "--model", str(tmp_path / "missing-big-lama.pt"),
         "--width", "576", "--height", "1024", "--duration", "2",
     ])
