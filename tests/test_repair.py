@@ -167,6 +167,22 @@ def test_moving_boxes_and_mask_image(tmp_path):
     assert not mask[0, 0]
 
 
+def test_frame_mask_paints_roi_only_inside_its_interval():
+    frame = np.zeros((64, 64, 3), np.uint8)
+    region = {
+        "name": "banner",
+        "mode": "box",
+        "box": [4, 40, 20, 8],
+        "intervals": [[0.0, 1.0]],
+    }
+    spec = {"dimensions": [64, 64], "regions": [region], "protect_regions": []}
+    prepared = [(region, None, None)]
+    on, _ = _frame_mask(frame, 0.5, spec, prepared)
+    off, _ = _frame_mask(frame, 2.0, spec, prepared)
+    assert int(on[44, 10]) == 255
+    assert not off.any()
+
+
 def test_empty_detected_mask_is_failure(tmp_path):
     source, model, regions = fixture(tmp_path)
     regions.write_text(json.dumps({
