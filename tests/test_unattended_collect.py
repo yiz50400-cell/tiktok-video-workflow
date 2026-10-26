@@ -487,16 +487,58 @@ def test_apply_screening_marks_croppable_text_bands():
     assert decision["rejected_frames"]["burned_text_croppable"] == 2
 
 
-def test_apply_screening_rejects_heavy_burned_text_even_with_crop_ok():
+def test_apply_screening_demotes_all_heavy_burn_without_hard_kill():
+    """All-heavy burn-in → soft demote (no clean segment), not wrong-product hard kill."""
     times, span = screen_times(15.0)
-    # Many heavy frames (English burned subtitles) must reject the whole clip.
     decision = apply_screening({"same_product": True, "frames": _frames({
         i: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": True, "product_prominent": True}
-        for i in range(6)
+        for i in range(12)
     })}, times, span)
     assert not decision["accepted"]
-    assert "烧录文字过多" in decision["reason"]
+    assert decision.get("demoted") is True
+    assert decision.get("demote_reason") == "burn_cut"
+    assert "烧录文字过多" not in decision["reason"]
+    assert "demote" in decision["reason"]
+    assert "硬杀" in decision["reason"]
     assert decision["rejected_frames"]["burned_text_heavy"] >= 6
+    assert decision["usable_segments"] == []
+
+
+def test_apply_screening_keeps_clean_segments_despite_heavy_burn_elsewhere():
+    """IZ binding: burn volume must not whole-reject when clean windows remain."""
+    times, span = screen_times(15.0)
+    # 3 heavy frames + rest clean/prominent — old burn gate (heavy>=3) would have killed this.
+    decision = apply_screening({"same_product": True, "reason": "同款眼霜", "frames": _frames({
+        0: {"product_prominent": True},
+        1: {"product_prominent": True},
+        2: {"burned_text": "heavy", "text_region": "middle", "crop_ok": False},
+        3: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": False},
+        4: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": False},
+        5: {"product_prominent": True},
+    })}, times, span)
+    assert decision["accepted"] is True
+    assert decision.get("demoted") is False
+    assert decision["usable_segments"]
+    usable_s = sum(s["end_s"] - s["start_s"] for s in decision["usable_segments"])
+    assert usable_s > 6.0
+    assert decision["burned_frames_cut"] >= 3
+    assert "烧录文字过多" not in decision["reason"]
+    # Heavy frames excluded from segments
+    for seg in decision["usable_segments"]:
+        assert seg["crop"] is None
+
+
+def test_apply_screening_wrong_product_still_hard_rejects():
+    times, span = screen_times(15.0)
+    decision = apply_screening({
+        "same_product": False,
+        "form_factor_seen": "滴管精华",
+        "reason": "不是眼霜",
+        "frames": _frames({i: {"burned_text": "heavy"} for i in range(12)}),
+    }, times, span)
+    assert decision["accepted"] is False
+    assert decision.get("demoted") is False
+    assert "不是同款" in decision["reason"]
 
 
 def test_collect_runs_supplement_round_when_screening_insufficient(tmp_path):
