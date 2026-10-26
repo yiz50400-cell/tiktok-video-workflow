@@ -6,6 +6,9 @@ Yang/IZ order (2026-10-26):
   3) Wrong-product stays a hard kill (never call this)
 
 Outputs need visual review — same posture as workflow.repair.
+
+ROI rule (IZ 2026-10-26): hug subtitle/text band only. Ban tall / full-frame /
+half-face delogo or boxblur that paints people (v5b cream smear).
 """
 
 from __future__ import annotations
@@ -16,11 +19,20 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
-TOP_FRAC = 0.26
-BOTTOM_FRAC = 0.26
-MIDDLE_Y0 = 0.28
-MIDDLE_FRAC = 0.44
+# Thin subtitle bands only — old TOP/BOTTOM 0.26 + middle 0.44@y0.28 painted faces.
+TOP_FRAC = 0.12
+BOTTOM_FRAC = 0.14
+MIDDLE_Y0 = 0.62  # lower-third caption (not face/center)
+MIDDLE_FRAC = 0.14
+MAX_BAND_FRAC = 0.15  # hard cap any single region height vs frame
+FACE_ZONE_Y0 = 0.18
+FACE_ZONE_Y1 = 0.55
+MAX_FACE_OVERLAP_FRAC = 0.08  # max overlap with face zone vs frame height
 DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
+
+
+class UnsafeBurnRoiError(ValueError):
+    """Raised when a delogo/boxblur box would smear face/center or exceed band caps."""
 
 
 def text_regions_from_frames(frames: list[dict[str, Any]]) -> list[str]:
@@ -37,21 +49,142 @@ def text_regions_from_frames(frames: list[dict[str, Any]]) -> list[str]:
     return sorted(counts.keys(), key=lambda r: (order.get(r, 9), -counts[r]))
 
 
+def _box_xyxy(box: list[int]) -> tuple[int, int, int, int]:
+    x, y, w, h = (int(v) for v in box)
+    return x, y, x + w, y + h
+
+
+def face_overlap_height(box: list[int], height: int) -> int:
+    """Pixels of vertical overlap between box and the face/center danger zone."""
+    _x, y0, _x2, y1 = _box_xyxy(box)
+    face0 = int(round(height * FACE_ZONE_Y0))
+    face1 = int(round(height * FACE_ZONE_Y1))
+    return max(0, min(y1, face1) - max(y0, face0))
+
+
+def assert_safe_roi(
+    box: list[int],
+    width: int,
+    height: int,
+    *,
+    name: str = "roi",
+) -> list[int]:
+    """Refuse tall / center-face boxes that would paint people (IZ v5b smear ban)."""
+    width, height = int(width), int(height)
+    if len(box) != 4:
+        raise UnsafeBurnRoiError(f"{name}: box must be [x,y,w,h], got {box!r}")
+    x, y, w, h = (int(v) for v in box)
+    if w <= 0 or h <= 0:
+        raise UnsafeBurnRoiError(f"{name}: non-positive size {box}")
+    if x < 0 or y < 0 or x + w > width + 1 or y + h > height + 1:
+        raise UnsafeBurnRoiError(f"{name}: box out of frame {box} vs {width}x{height}")
+    max_h = max(8, int(round(height * MAX_BAND_FRAC)))
+    if h > max_h:
+        raise UnsafeBurnRoiError(
+            f"{name}: height {h} exceeds MAX_BAND_FRAC={MAX_BAND_FRAC} "
+            f"(max {max_h}px on {height}px frame) — refuse tall/full-frame smear"
+        )
+    overlap = face_overlap_height(box, height)
+    max_overlap = max(4, int(round(height * MAX_FACE_OVERLAP_FRAC)))
+    if overlap > max_overlap and h > int(round(height * 0.10)):
+        raise UnsafeBurnRoiError(
+            f"{name}: overlaps face/center zone by {overlap}px "
+            f"(>{max_overlap}px allowed) with h={h} — refuse half-face smear"
+        )
+    return [x, y, w, h]
+
+
+def filter_safe_regions(
+    regions: list[dict[str, Any]],
+    width: int,
+    height: int,
+) -> list[dict[str, Any]]:
+    """Keep only ROI boxes that pass assert_safe_roi; drop unsafe ones."""
+    safe: list[dict[str, Any]] = []
+    for region in regions or []:
+        box = region.get("box")
+        if not box:
+            continue
+        try:
+            cleaned = assert_safe_roi(list(box), width, height, name=str(region.get("name") or "roi"))
+        except UnsafeBurnRoiError:
+            continue
+        safe.append({**region, "box": cleaned})
+    return safe
+
+
 def band_box(region: str, width: int, height: int) -> list[int]:
+    """Return [x, y, w, h] hugging a thin subtitle band. Never a tall center box."""
     width, height = int(width), int(height)
     if width <= 0 or height <= 0:
         raise ValueError("width/height must be positive")
+    max_h = max(8, int(round(height * MAX_BAND_FRAC)))
     if region == "top":
-        h = max(8, int(round(height * TOP_FRAC)))
-        return [0, 0, width, h]
-    if region == "bottom":
-        h = max(8, int(round(height * BOTTOM_FRAC)))
-        return [0, max(0, height - h), width, h]
-    h = max(8, int(round(height * MIDDLE_FRAC)))
-    y = max(0, int(round(height * MIDDLE_Y0)))
-    if y + h > height:
-        y = max(0, height - h)
-    return [0, y, width, h]
+        h = min(max(8, int(round(height * TOP_FRAC))), max_h)
+        box = [0, 0, width, h]
+    elif region == "bottom":
+        h = min(max(8, int(round(height * BOTTOM_FRAC))), max_h)
+        box = [0, max(0, height - h), width, h]
+    else:
+        # "middle" → lower-third caption strip (avoid face/center)
+        h = min(max(8, int(round(height * MIDDLE_FRAC))), max_h)
+        y = max(0, int(round(height * MIDDLE_Y0)))
+        if y + h > height:
+            y = max(0, height - h)
+        box = [0, y, width, h]
+    return assert_safe_roi(box, width, height, name=f"band:{region}")
+
+
+
+def _coerce_text_bbox(raw: Any, width: int, height: int) -> list[int] | None:
+    """Accept [x,y,w,h] pixels or normalized 0..1 floats; return pixel box or None."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        if all(k in raw for k in ("x", "y", "w", "h")):
+            raw = [raw["x"], raw["y"], raw["w"], raw["h"]]
+        elif all(k in raw for k in ("x", "y", "width", "height")):
+            raw = [raw["x"], raw["y"], raw["width"], raw["height"]]
+        else:
+            return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    vals = [float(v) for v in raw]
+    # normalized if all coords look like fractions
+    if max(vals) <= 1.5:
+        x = int(round(vals[0] * width))
+        y = int(round(vals[1] * height))
+        w = int(round(vals[2] * width))
+        h = int(round(vals[3] * height))
+    else:
+        x, y, w, h = (int(round(v)) for v in vals)
+    # even sizes help ffmpeg delogo
+    w = max(2, w - (w % 2))
+    h = max(2, h - (h % 2))
+    return [x, y, w, h]
+
+
+def text_bboxes_from_frames(frames: list[dict[str, Any]], width: int, height: int) -> list[list[int]]:
+    """Collect safe pixel bboxes from screening frame text_bbox / bbox fields."""
+    out: list[list[int]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for frame in frames or []:
+        if str(frame.get("burned_text") or "none") == "none":
+            continue
+        raw = frame.get("text_bbox") or frame.get("bbox") or frame.get("text_box")
+        box = _coerce_text_bbox(raw, width, height)
+        if not box:
+            continue
+        try:
+            box = assert_safe_roi(box, width, height, name="text_bbox")
+        except UnsafeBurnRoiError:
+            continue
+        key = tuple(box)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(box)
+    return out
 
 
 def mask_spec_from_frames(
@@ -61,17 +194,33 @@ def mask_spec_from_frames(
     *,
     regions: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Build delogo/boxblur mask. Prefer tight text_bbox from screening; else thin bands."""
+    width, height = int(width), int(height)
+    boxes: list[dict[str, Any]] = []
+    # 1) Tight per-frame bboxes when screening provides them (IZ: hug subtitle only)
+    for i, box in enumerate(text_bboxes_from_frames(frames, width, height)):
+        boxes.append({"name": f"burn_bbox_{i}", "mode": "box", "box": box})
+    if boxes:
+        return {"dimensions": [width, height], "regions": boxes, "purpose": "burned_text_salvage"}
+    # 2) Fallback: thin top/bottom/lower-third bands (never tall center)
     regions = regions or text_regions_from_frames(frames)
-    boxes = []
+    # Prefer edge bands; full-width "middle" still paints cheeks on face close-ups,
+    # so only keep middle when no top/bottom signal.
+    if "top" in regions or "bottom" in regions:
+        regions = [r for r in regions if r in ("top", "bottom")]
     seen: set[str] = set()
     for region in regions:
         if region in seen:
             continue
         seen.add(region)
-        boxes.append({"name": f"burn_{region}", "mode": "box", "box": band_box(region, width, height)})
+        try:
+            box = band_box(region, width, height)
+        except UnsafeBurnRoiError:
+            continue
+        boxes.append({"name": f"burn_{region}", "mode": "box", "box": box})
     if not boxes:
         boxes.append({"name": "burn_bottom", "mode": "box", "box": band_box("bottom", width, height)})
-    return {"dimensions": [int(width), int(height)], "regions": boxes, "purpose": "burned_text_salvage"}
+    return {"dimensions": [width, height], "regions": boxes, "purpose": "burned_text_salvage"}
 
 
 def repair_hint_from_decision(decision: dict[str, Any], width: int, height: int) -> dict[str, Any] | None:
@@ -145,11 +294,13 @@ def remove_or_blur_burn(
     source = Path(source)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    regions = list(mask_spec.get("regions") or [])
+    width, height = int(mask_spec["dimensions"][0]), int(mask_spec["dimensions"][1])
+    regions = filter_safe_regions(list(mask_spec.get("regions") or []), width, height)
     if not regions:
-        raise ValueError("mask_spec.regions required")
+        raise UnsafeBurnRoiError(
+            "mask_spec.regions empty or all unsafe (tall/face-center ROI refused)"
+        )
     if engine == "delogo":
-        width, height = int(mask_spec["dimensions"][0]), int(mask_spec["dimensions"][1])
         vf = _delogo_filter(regions, width, height)
         cmd = [ffmpeg, "-y", "-i", str(source), "-vf", vf, "-c:a", "copy", str(output)]
     elif engine == "boxblur":

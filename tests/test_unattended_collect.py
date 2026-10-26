@@ -545,7 +545,12 @@ def test_apply_screening_wrong_product_still_hard_rejects():
 
 
 def test_mask_spec_from_frames_maps_text_bands():
-    from workflow.unattended.burn_repair import band_box, mask_spec_from_frames, text_regions_from_frames
+    from workflow.unattended.burn_repair import (
+        MAX_BAND_FRAC,
+        band_box,
+        mask_spec_from_frames,
+        text_regions_from_frames,
+    )
     frames = [
         {"burned_text": "heavy", "text_region": "bottom"},
         {"burned_text": "heavy", "text_region": "bottom"},
@@ -559,6 +564,62 @@ def test_mask_spec_from_frames_maps_text_bands():
     assert "burn_bottom" in names and "burn_top" in names
     bottom = band_box("bottom", 1080, 1920)
     assert bottom[1] + bottom[3] == 1920
+    # ROI must stay thin — never old 0.26/0.44 face-smear bands
+    assert bottom[3] <= int(round(1920 * MAX_BAND_FRAC))
+    top = band_box("top", 1080, 1920)
+    assert top[3] <= int(round(1920 * MAX_BAND_FRAC))
+    middle = band_box("middle", 1080, 1920)
+    assert middle[3] <= int(round(1920 * MAX_BAND_FRAC))
+    # middle remapped to lower-third, below face center
+    assert middle[1] >= int(round(1920 * 0.55))
+
+
+def test_assert_safe_roi_refuses_tall_and_face_center_boxes():
+    from workflow.unattended.burn_repair import UnsafeBurnRoiError, assert_safe_roi, filter_safe_regions
+    W, H = 1080, 1920
+    # Old middle smear (0.28–0.72) must refuse
+    try:
+        assert_safe_roi([0, int(H * 0.28), W, int(H * 0.44)], W, H, name="old_middle")
+        assert False, "expected UnsafeBurnRoiError"
+    except UnsafeBurnRoiError:
+        pass
+    # Old 26% top band must refuse
+    try:
+        assert_safe_roi([0, 0, W, int(H * 0.26)], W, H, name="old_top")
+        assert False, "expected UnsafeBurnRoiError"
+    except UnsafeBurnRoiError:
+        pass
+    # Thin bottom caption OK
+    ok = assert_safe_roi([0, H - int(H * 0.12), W, int(H * 0.12)], W, H, name="thin_bottom")
+    assert ok[3] <= int(H * 0.15)
+    # filter_safe_regions drops unsafe, keeps safe
+    regions = [
+        {"name": "bad", "mode": "box", "box": [0, int(H * 0.28), W, int(H * 0.44)]},
+        {"name": "good", "mode": "box", "box": [0, H - 200, W, 200]},
+    ]
+    safe = filter_safe_regions(regions, W, H)
+    assert [r["name"] for r in safe] == ["good"]
+
+
+
+
+def test_mask_spec_prefers_tight_text_bbox_over_bands():
+    from workflow.unattended.burn_repair import mask_spec_from_frames
+    frames = [
+        {"burned_text": "heavy", "text_region": "middle",
+         "text_bbox": [250, 737, 90, 46]},
+    ]
+    spec = mask_spec_from_frames(frames, 576, 1024)
+    assert len(spec["regions"]) == 1
+    assert spec["regions"][0]["name"].startswith("burn_bbox_")
+    assert spec["regions"][0]["box"] == [250, 737, 90, 46]
+    # Without bbox, middle alone still yields thin lower-third band (not old 0.44 center)
+    spec2 = mask_spec_from_frames(
+        [{"burned_text": "heavy", "text_region": "middle"}], 576, 1024
+    )
+    box = spec2["regions"][0]["box"]
+    assert box[3] <= int(round(1024 * 0.15))
+    assert box[1] >= int(round(1024 * 0.55))
 
 
 def test_salvage_demoted_burn_delogo(tmp_path):
