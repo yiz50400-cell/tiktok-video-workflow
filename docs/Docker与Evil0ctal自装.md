@@ -1,4 +1,4 @@
-# Docker + Evil0ctal 客户自装（采集旁路）
+# Docker + Evil0ctal 客户自装（保量默认发现）
 
 更新：2026-10-26（Asia/Shanghai）。
 
@@ -8,10 +8,10 @@
 
 | 项 | 说明 |
 | --- | --- |
-| 角色 | **可选旁路**，用来加厚素材发现（试点：墨西哥眼霜一类品类可从数十条提到上百条候选 URL） |
-| 默认采集 | 仍是 Codex web search → yt-dlp；**不必**装 Docker/Evil 也能做片 |
-| 本仓库代码 | **不要**改主采集流水线、不要把 Evil 嵌进 `workflow/` 默认路径；本页只写自装与交接 |
-| 下载 | Evil 只负责搜 URL；**下载继续用 yt-dlp**（`requirements-collect.txt`） |
+| 角色 | **保量默认发现**：Docker+Evil 就绪时，无人值守采集**优先**用 Evil 搜 TikTok 页 URL，再交本仓 yt-dlp（试点：墨西哥眼霜一类可从数十条提到上百条候选） |
+| 降级 | Evil/Docker **未就绪**（探针失败或缺 API key）时，自动降级 Codex web search → yt-dlp，仍能出片；缺 Docker 不会卡死 |
+| 本仓库代码 | `workflow/unattended/evil_discovery.py` 已接入 `collect_footage`；本页写客户机自装与密钥放置 |
+| 下载 | Evil **只**负责搜 URL；**下载继续用 yt-dlp**（`requirements-collect.txt`） |
 | 登录 | 推荐 **guest + browser**；**不要**导入客户 TikTok 业务号 cookie |
 
 主部署仍见 [Windows源码部署](Windows源码部署.md)。官方 Evil 文档：<https://douyin.wtf/quickstart/>。
@@ -243,7 +243,7 @@ docker compose -p dtk -f docker/compose.yml --profile browser up -d
 
 - `.env`、管理员密码、`dtk_` API Key：**仅本机私密保存**，不进 Git、不进客户交付包、不发群。
 - **禁止**导入客户 TikTok 店铺/达人业务号 cookie。
-- Evil 与本工作流仓库**目录分离**；本页不改变 main 默认发现逻辑。
+- Evil 与本工作流仓库**目录分离**；采集默认探测本机 Evil API，就绪则加厚，否则降级 Codex。
 - 对外暴露 `0.0.0.0:8000` 需自备 TLS 与访问控制；默认 loopback 即可。
 - 第三方非官方 API，平台规则与可用性可能变化；出问题先查 <https://douyin.wtf/> 与 compose 日志。
 
@@ -253,7 +253,7 @@ docker compose -p dtk -f docker/compose.yml --profile browser up -d
 2. `curl http://127.0.0.1:8000/readyz` → ok  
 3. 控制台 Identities：至少 1 条 TikTok active（guest）  
 4. `search/posts` 某眼霜相关词能返回带 `/video/` 的 `web_url`  
-5. URL 列表经 yt-dlp 可下载，并能进入本仓库初筛/制作（与默认 web_search 路径并行，不替换代码）
+5. 配置 `VW_EVIL_API_KEY`（或 `VW_EVIL_API_KEY_FILE`）后跑无人值守：日志出现「采集-Evil 就绪」且候选池明显厚于纯 web_search；关掉 Docker 后再跑应出现「Evil 降级 Codex」且仍能出到 `delivery/`
 
 ---
 
