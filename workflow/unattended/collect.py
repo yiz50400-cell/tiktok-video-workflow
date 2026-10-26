@@ -1054,7 +1054,11 @@ def collect_footage(
                 "accepted": False, "reason": "无初筛结果", "usable_segments": [],
             }
             clip.screen_grid, clip.screen_times = d.get("screen_grid"), d.get("screen_times") or []
-            # Yang/IZ: cut/dodge first; if demoted burn → remove/blur salvage (watermark spirit).
+            if clip.screen_times and not decision.get("screen_times"):
+                decision = {**decision, "screen_times": [round(float(t), 2) for t in clip.screen_times]}
+            # IZ 2026-10-26: burned-in text → direct salvage. boxblur (temporal hue+blur)
+            # before delogo — delogo stretches colored subtitle chips. Wrong-product never
+            # reaches this branch.
             if (
                 not decision.get("accepted")
                 and decision.get("demoted")
@@ -1072,7 +1076,7 @@ def collect_footage(
                         duration=float(clip.duration),
                         workdir=salvage_dir,
                         ffmpeg=ffmpeg,
-                        engines=("delogo", "boxblur"),
+                        engines=("boxblur", "delogo"),
                         log=log,
                     )
                     if decision.get("salvaged") and decision.get("salvaged_path"):

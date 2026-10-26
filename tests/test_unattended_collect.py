@@ -622,9 +622,121 @@ def test_mask_spec_prefers_tight_text_bbox_over_bands():
     assert box[1] >= int(round(1024 * 0.55))
 
 
-def test_salvage_demoted_burn_delogo(tmp_path):
-    from workflow.unattended.burn_repair import salvage_demoted_burn
+def test_apply_screening_salvages_burn_dominated_instead_of_clean_scraps():
+    """Burn on a majority of frames is direct salvage, not a handful of clean scraps."""
+    times, span = screen_times(15.0)
+    overrides = {
+        i: {"burned_text": "heavy", "text_region": "bottom", "crop_ok": False, "product_prominent": True}
+        for i in range(8)
+    }
+    decision = apply_screening({"same_product": True, "frames": _frames(overrides)}, times, span)
+    assert decision["accepted"] is False
+    assert decision.get("demoted") is True
+    assert decision.get("demote_reason") == "burn_cut"
+    assert decision["usable_segments"] == []
+    assert decision.get("repair_candidate") is True
+    assert "不优先切/躲" in decision["reason"]
+    assert decision["frames"][0]["t"] == times[0]
+
+
+def test_boxblur_filter_is_temporal_desat_not_delogo():
+    """Mac 754595 plan: hue=s=0, dual boxblur=10:2, enable=between — not delogo."""
+    from workflow.unattended.burn_repair import (
+        MAX_BAND_FRAC,
+        UnsafeBurnRoiError,
+        _boxblur_filter_labeled,
+        assert_safe_roi,
+        mask_from_plan,
+    )
+    plan = {"regions": [
+        {"name": "banner", "box": [47, 730, 482, 48], "t0": 0.00, "t1": 2.50},
+        {"name": "chip_a", "box": [371, 422, 154, 48], "t0": 2.25, "t1": 3.50},
+        {"name": "chip_b", "box": [360, 922, 176, 54], "t0": 2.25, "t1": 3.50},
+        {"name": "dia", "box": [248, 725, 104, 60], "t0": 3.25, "t1": 11.50},
+        {"name": "dia_moved", "box": [360, 691, 102, 52], "t0": 11.25, "t1": 13.25},
+    ]}
+    W, H = 576, 1024
+    for item in plan["regions"]:
+        assert_safe_roi(item["box"], W, H, name=item["name"])
+        assert item["box"][3] <= int(round(H * MAX_BAND_FRAC))
+    try:
+        assert_safe_roi([0, 200, W, int(H * 0.44)], W, H, name="tall_union")
+        assert False, "expected UnsafeBurnRoiError"
+    except UnsafeBurnRoiError:
+        pass
+    spec = mask_from_plan(plan, W, H)
+    fc = _boxblur_filter_labeled(spec["regions"], W, H)
+    assert "delogo" not in fc
+    assert fc.count("hue=s=0,boxblur=10:2,boxblur=10:2") == 5
+    assert "overlay=47:730:enable='between(t\\,0.00\\,2.50)'" in fc
+    assert "overlay=371:422:enable='between(t\\,2.25\\,3.50)'" in fc
+    assert "overlay=360:922:enable='between(t\\,2.25\\,3.50)'" in fc
+    assert "overlay=248:725:enable='between(t\\,3.25\\,11.50)'" in fc
+    assert "overlay=360:691:enable='between(t\\,11.25\\,13.25)'" in fc
+
+
+def test_temporal_mask_clusters_moving_bbox_with_overlap():
+    from workflow.unattended.burn_repair import MAX_BAND_FRAC, mask_spec_from_frames
+    W, H = 576, 1024
+    times = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
+    frames = []
+    boxes = {
+        0: [47, 730, 482, 48],
+        1: [50, 732, 470, 46],
+        2: [248, 725, 104, 60],
+        3: [248, 725, 104, 60],
+        4: [250, 726, 100, 58],
+        5: [360, 691, 102, 52],
+    }
+    for i, t in enumerate(times):
+        frames.append({
+            "i": i, "t": t, "burned_text": "heavy", "text_region": "bottom",
+            "text_bbox": boxes[i], "product_visible": True,
+        })
+    spec = mask_spec_from_frames(frames, W, H, times=times, duration=8.0)
+    regions = spec["regions"]
+    assert len(regions) == 3
+    for region in regions:
+        assert region["box"][3] <= int(round(H * MAX_BAND_FRAC))
+        assert region["intervals"]
+    # Stable día track covers the middle samples and does not swallow the moved chip.
+    dia = next(r for r in regions if r["box"][0] < 300 and r["box"][1] >= 700 and r["box"][2] < 200)
+    moved = next(r for r in regions if r["box"][0] >= 300 and r["box"][1] < 750)
+    assert dia["intervals"][0][1] < 6.0
+    assert moved["intervals"][0][0] > 4.0
+    # Handoff overlap is about ROI_OVERLAP_S (0.25), not a full-clip enable.
+    overlap = min(dia["intervals"][-1][1], moved["intervals"][0][1]) - max(dia["intervals"][-1][0], moved["intervals"][0][0])
+    assert 0.15 <= overlap <= 0.4
+
+
+def test_proven_temporal_boxblur_encodes(tmp_path):
+    from workflow.unattended.burn_repair import mask_from_plan, remove_or_blur_burn
     from workflow.unattended.collect import resolve_ffmpeg
+    ffmpeg = resolve_ffmpeg()
+    src = tmp_path / "chip.mp4"
+    subprocess.run([
+        ffmpeg, "-y", "-f", "lavfi", "-i", "color=c=0xE7C4A8:s=576x1024:d=1",
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-shortest",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src),
+    ], capture_output=True, check=True)
+    spec = mask_from_plan({"regions": [
+        {"box": [47, 730, 482, 48], "t0": 0.0, "t1": 0.4},
+        {"box": [248, 725, 104, 60], "t0": 0.3, "t1": 0.8},
+    ]}, 576, 1024)
+    out = remove_or_blur_burn(src, spec, tmp_path / "out.mp4", ffmpeg=ffmpeg, engine="boxblur")
+    cmd = out["cmd"]
+    graph = cmd[cmd.index("-filter_complex") + 1]
+    assert "hue=s=0,boxblur=10:2,boxblur=10:2" in graph
+    assert "delogo" not in graph
+    assert "enable=" in graph
+    assert Path(out["output"]).is_file()
+
+
+def test_salvage_demoted_burn_prefers_boxblur(tmp_path):
+    from workflow.unattended.burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
+    from workflow.unattended.collect import resolve_ffmpeg
+    assert DEFAULT_SALVAGE_ENGINES[0] == "boxblur"
+    assert DEFAULT_SALVAGE_ENGINES.index("boxblur") < DEFAULT_SALVAGE_ENGINES.index("delogo")
     ffmpeg = resolve_ffmpeg()
     src = tmp_path / "burn.mp4"
     subprocess.run([
@@ -632,21 +744,27 @@ def test_salvage_demoted_burn_delogo(tmp_path):
         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-shortest",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src),
     ], capture_output=True, check=True)
-    frames = [{"i": i, "product_visible": True, "product_prominent": True,
+    frames = [{"i": i, "t": round((i + 0.5) * 12 / 12, 2), "product_visible": True, "product_prominent": True,
                "burned_text": "heavy", "text_region": "bottom", "crop_ok": False,
-               "watermark": False, "lifestyle_only": False} for i in range(12)]
+               "watermark": False, "lifestyle_only": False,
+               "text_bbox": [40, 560, 240, 48]} for i in range(12)]
     decision = {
         "accepted": False, "demoted": True, "demote_reason": "burn_cut",
         "frames": frames, "usable_segments": [], "reason": "demote",
+        "screen_times": [round((i + 0.5), 2) for i in range(12)],
     }
     out = salvage_demoted_burn(
         decision, src, width=320, height=640, duration=1.0,
-        workdir=tmp_path / "salvage", ffmpeg=ffmpeg, engines=("delogo", "boxblur"),
+        workdir=tmp_path / "salvage", ffmpeg=ffmpeg,
     )
     assert out["accepted"] and out.get("salvaged")
-    assert out.get("salvage_engine") in ("delogo", "boxblur")
+    assert out.get("salvage_engine") == "boxblur"
     assert Path(out["salvaged_path"]).is_file()
     assert out["usable_segments"][0]["end_s"] == 1.0
+    spec = out["repair_hint"]["mask_spec"]
+    assert spec["preferred_engine"] == "boxblur"
+    assert spec["regions"][0]["box"][3] <= int(round(640 * 0.15))
+    assert "delogo" not in (out.get("reason") or "")
 
 
 def test_salvage_skips_wrong_product():

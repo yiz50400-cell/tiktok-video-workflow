@@ -1,14 +1,18 @@
-"""Salvage burned-in source text after cut/dodge fails.
+"""Direct salvage for burned-in source subtitles/text.
 
-Yang/IZ order (2026-10-26):
-  1) Prefer clean cut/dodge segments (vision.apply_screening)
-  2) Else remove/blur like watermark repair (ffmpeg delogo/boxblur; optional LaMa)
-  3) Wrong-product stays a hard kill (never call this)
+IZ/Yang (2026-10-26):
+  1) Burned-in text → direct salvage. Do not prefer cut/dodge and do not skip treatment.
+  2) Wrong-product / blacklist stays a hard kill (never call this).
+  3) ROI hugs the subtitle/text bbox only (MAX_BAND_FRAC, assert_safe_roi).
+     Ban tall / full-frame / face smear (v5b cream smear).
+
+Preferred engine, proven on full-clip 754595 (delogo stretch/mosaic was the QA fail):
+  crop the hug-ROI → hue=s=0 → boxblur=10:2 → boxblur=10:2
+  → overlay=X:Y:enable='between(t,t0,t1)'
+ffmpeg delogo interpolates the rectangle from its border and stretches colored
+subtitle chips, so it is only a fallback after boxblur. LaMa stays optional.
 
 Outputs need visual review — same posture as workflow.repair.
-
-ROI rule (IZ 2026-10-26): hug subtitle/text band only. Ban tall / full-frame /
-half-face delogo or boxblur that paints people (v5b cream smear).
 """
 
 from __future__ import annotations
@@ -29,6 +33,14 @@ FACE_ZONE_Y0 = 0.18
 FACE_ZONE_Y1 = 0.55
 MAX_FACE_OVERLAP_FRAC = 0.08  # max overlap with face zone vs frame height
 DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
+# boxblur before delogo: delogo's border interpolation stretches opaque chips.
+DEFAULT_SALVAGE_ENGINES = ("boxblur", "delogo", "lama")
+# Mac 754595: radius 10, power 2, applied twice after desaturating the ROI.
+PROVEN_BLUR_RADIUS = 10
+PROVEN_BLUR_POWER = 2
+# Neighboring ROIs overlap so glyphs do not flash in the handoff gap.
+ROI_OVERLAP_S = 0.25
+TRACK_IOU = 0.45
 
 
 class UnsafeBurnRoiError(ValueError):
@@ -187,29 +199,233 @@ def text_bboxes_from_frames(frames: list[dict[str, Any]], width: int, height: in
     return out
 
 
+def _iou(a: list[int], b: list[int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x0, y0 = max(ax, bx), max(ay, by)
+    x1, y1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    inter = max(0, x1 - x0) * max(0, y1 - y0)
+    union = aw * ah + bw * bh - inter
+    return inter / union if union else 0.0
+
+
+def _union_box(a: list[int], b: list[int]) -> list[int]:
+    x0, y0 = min(a[0], b[0]), min(a[1], b[1])
+    x1 = max(a[0] + a[2], b[0] + b[2])
+    y1 = max(a[1] + a[3], b[1] + b[3])
+    return [int(x0), int(y0), int(x1 - x0), int(y1 - y0)]
+
+
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    ordered = sorted((float(a), float(b)) for a, b in intervals if float(b) > float(a))
+    if not ordered:
+        return []
+    merged: list[list[float]] = [[ordered[0][0], ordered[0][1]]]
+    for start, end in ordered[1:]:
+        if start <= merged[-1][1] + 0.02:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(round(start, 2), round(end, 2)) for start, end in merged]
+
+
+def _half_step(grid: list[float]) -> float:
+    if len(grid) < 2:
+        return 0.5
+    gaps = [grid[i + 1] - grid[i] for i in range(len(grid) - 1) if grid[i + 1] > grid[i]]
+    if not gaps:
+        return 0.5
+    gaps.sort()
+    return max(0.15, gaps[len(gaps) // 2] / 2)
+
+
+def _frame_time(frame: dict[str, Any], index: int, times: list[float] | None) -> float | None:
+    if frame.get("t") is not None:
+        return float(frame["t"])
+    if frame.get("time_s") is not None:
+        return float(frame["time_s"])
+    idx = int(frame.get("i", index))
+    if times and 0 <= idx < len(times):
+        return float(times[idx])
+    return None
+
+
+def _sample_window(t: float, half: float, duration: float | None) -> tuple[float, float]:
+    start = max(0.0, t - half)
+    end = t + half
+    if duration is not None:
+        end = min(float(duration), end)
+    if end <= start:
+        end = start + 0.2
+    return start, end
+
+
+def _with_overlap(intervals: list[tuple[float, float]], duration: float | None) -> list[tuple[float, float]]:
+    """Expand each window by half of ROI_OVERLAP_S so neighbors overlap ~0.25s."""
+    pad = ROI_OVERLAP_S / 2.0
+    expanded: list[tuple[float, float]] = []
+    for start, end in intervals:
+        start2 = max(0.0, start - pad)
+        end2 = end + pad
+        if duration is not None:
+            end2 = min(float(duration), end2)
+        expanded.append((start2, end2))
+    return _merge_intervals(expanded)
+
+
+def _raw_boxes(frame: dict[str, Any]) -> list[Any]:
+    multi = frame.get("text_bboxes")
+    if isinstance(multi, list) and multi:
+        return list(multi)
+    raw = frame.get("text_bbox") or frame.get("bbox") or frame.get("text_box")
+    return [raw] if raw is not None else []
+
+
+def _safe_box(raw: Any, width: int, height: int) -> list[int] | None:
+    box = _coerce_text_bbox(raw, width, height)
+    if not box:
+        return None
+    try:
+        return assert_safe_roi(box, width, height, name="text_bbox")
+    except UnsafeBurnRoiError:
+        return None
+
+
+def temporal_text_regions(
+    frames: list[dict[str, Any]],
+    width: int,
+    height: int,
+    *,
+    times: list[float] | None = None,
+    duration: float | None = None,
+) -> list[dict[str, Any]]:
+    """Cluster text bboxes into tight tracks with enable windows.
+
+    Same-place chips share one ROI across the samples where they appear.
+    A moved chip (different bbox) becomes another ROI. Windows overlap by
+    ROI_OVERLAP_S so the handoff does not flash readable text. Boxes that
+    fail assert_safe_roi are dropped — never grown into a tall/face smear.
+    """
+    width, height = int(width), int(height)
+    samples: list[dict[str, Any]] = []
+    grid: list[float] = [float(t) for t in (times or [])]
+    for index, frame in enumerate(frames or []):
+        if not isinstance(frame, dict):
+            continue
+        t = _frame_time(frame, index, times)
+        if t is not None:
+            grid.append(t)
+        if str(frame.get("burned_text") or "none") == "none":
+            continue
+        for raw in _raw_boxes(frame):
+            box = _safe_box(raw, width, height)
+            if box:
+                samples.append({"t": t, "box": box})
+    if not samples:
+        return []
+    grid = sorted({round(t, 3) for t in grid})
+    half = _half_step(grid) if any(sample["t"] is not None for sample in samples) else None
+    duration_f = float(duration) if duration is not None else None
+    clusters: list[dict[str, Any]] = []
+    for sample in samples:
+        box = sample["box"]
+        window = _sample_window(sample["t"], half, duration_f) if sample["t"] is not None and half is not None else None
+        placed = False
+        for cluster in clusters:
+            if _iou(cluster["box"], box) < TRACK_IOU:
+                continue
+            try:
+                union = assert_safe_roi(_union_box(cluster["box"], box), width, height, name="text_bbox_union")
+            except UnsafeBurnRoiError:
+                continue
+            cluster["box"] = union
+            if window:
+                cluster["windows"].append(window)
+            placed = True
+            break
+        if not placed:
+            clusters.append({"box": box, "windows": [window] if window else []})
+    regions: list[dict[str, Any]] = []
+    for index, cluster in enumerate(clusters):
+        intervals = _with_overlap(cluster["windows"], duration_f) if cluster["windows"] else []
+        region: dict[str, Any] = {"name": f"burn_bbox_{index}", "mode": "box", "box": cluster["box"]}
+        if intervals:
+            region["intervals"] = [[start, end] for start, end in intervals]
+            region["t0"] = intervals[0][0]
+            region["t1"] = intervals[-1][1]
+        regions.append(region)
+    return regions
+
+
+def _attach_band_intervals(
+    region_name: str,
+    box: list[int],
+    frames: list[dict[str, Any]],
+    times: list[float] | None,
+    duration: float | None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {"name": f"burn_{region_name}", "mode": "box", "box": box}
+    if not times and not any(isinstance(f, dict) and (f.get("t") is not None or f.get("time_s") is not None) for f in frames or []):
+        return item
+    grid = [float(t) for t in (times or [])]
+    hits: list[float] = []
+    for index, frame in enumerate(frames or []):
+        if not isinstance(frame, dict) or str(frame.get("burned_text") or "none") == "none":
+            continue
+        where = str(frame.get("text_region") or "")
+        if where != region_name:
+            continue
+        t = _frame_time(frame, index, times)
+        if t is None:
+            continue
+        hits.append(t)
+        grid.append(t)
+    if not hits:
+        return item
+    grid = sorted({round(t, 3) for t in grid})
+    half = _half_step(grid)
+    duration_f = float(duration) if duration is not None else None
+    windows = [_sample_window(t, half, duration_f) for t in hits]
+    intervals = _with_overlap(windows, duration_f)
+    if intervals:
+        item["intervals"] = [[start, end] for start, end in intervals]
+        item["t0"] = intervals[0][0]
+        item["t1"] = intervals[-1][1]
+    return item
+
+
 def mask_spec_from_frames(
     frames: list[dict[str, Any]],
     width: int,
     height: int,
     *,
     regions: list[str] | None = None,
+    times: list[float] | None = None,
+    duration: float | None = None,
 ) -> dict[str, Any]:
-    """Build delogo/boxblur mask. Prefer tight text_bbox from screening; else thin bands."""
+    """Build a salvage mask. Prefer tight temporal text_bbox tracks; else thin bands.
+
+    Each region may carry intervals [[t0, t1], ...] so boxblur only covers the
+    subtitle while it is on screen. Bboxes that fail assert_safe_roi are dropped.
+    """
     width, height = int(width), int(height)
-    boxes: list[dict[str, Any]] = []
-    # 1) Tight per-frame bboxes when screening provides them (IZ: hug subtitle only)
-    for i, box in enumerate(text_bboxes_from_frames(frames, width, height)):
-        boxes.append({"name": f"burn_bbox_{i}", "mode": "box", "box": box})
-    if boxes:
-        return {"dimensions": [width, height], "regions": boxes, "purpose": "burned_text_salvage"}
-    # 2) Fallback: thin top/bottom/lower-third bands (never tall center)
-    regions = regions or text_regions_from_frames(frames)
-    # Prefer edge bands; full-width "middle" still paints cheeks on face close-ups,
+    timed = temporal_text_regions(frames, width, height, times=times, duration=duration)
+    if timed:
+        return {
+            "dimensions": [width, height],
+            "regions": timed,
+            "purpose": "burned_text_salvage",
+            "preferred_engine": "boxblur",
+        }
+    # Fallback: thin top/bottom/lower-third bands (never a tall center box).
+    selected = list(regions or text_regions_from_frames(frames))
+    # Full-width "middle" still paints cheeks on face close-ups,
     # so only keep middle when no top/bottom signal.
-    if "top" in regions or "bottom" in regions:
-        regions = [r for r in regions if r in ("top", "bottom")]
+    if "top" in selected or "bottom" in selected:
+        selected = [r for r in selected if r in ("top", "bottom")]
+    boxes: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for region in regions:
+    for region in selected:
         if region in seen:
             continue
         seen.add(region)
@@ -217,23 +433,50 @@ def mask_spec_from_frames(
             box = band_box(region, width, height)
         except UnsafeBurnRoiError:
             continue
-        boxes.append({"name": f"burn_{region}", "mode": "box", "box": box})
+        boxes.append(_attach_band_intervals(region, box, frames, times, duration))
     if not boxes:
-        boxes.append({"name": "burn_bottom", "mode": "box", "box": band_box("bottom", width, height)})
-    return {"dimensions": [width, height], "regions": boxes, "purpose": "burned_text_salvage"}
+        boxes.append({
+            "name": "burn_bottom",
+            "mode": "box",
+            "box": band_box("bottom", width, height),
+        })
+    return {
+        "dimensions": [width, height],
+        "regions": boxes,
+        "purpose": "burned_text_salvage",
+        "preferred_engine": "boxblur",
+    }
 
 
-def repair_hint_from_decision(decision: dict[str, Any], width: int, height: int) -> dict[str, Any] | None:
+def repair_hint_from_decision(
+    decision: dict[str, Any],
+    width: int,
+    height: int,
+    *,
+    duration: float | None = None,
+) -> dict[str, Any] | None:
     if not decision.get("demoted") or decision.get("demote_reason") != "burn_cut":
         return None
     frames = decision.get("frames") or []
     regions = text_regions_from_frames(frames)
+    explicit = (decision.get("repair_hint") or {}).get("mask_spec")
+    if isinstance(explicit, dict) and explicit.get("regions"):
+        spec = explicit
+    else:
+        spec = mask_spec_from_frames(
+            frames, width, height, regions=regions,
+            times=decision.get("screen_times"), duration=duration,
+        )
     return {
-        "engine_order": ["delogo", "boxblur", "lama"],
+        "engine_order": list(DEFAULT_SALVAGE_ENGINES),
         "regions": regions,
-        "mask_spec": mask_spec_from_frames(frames, width, height, regions=regions),
+        "mask_spec": spec,
         "needs_visual_review": True,
-        "note": "cut/dodge left no clean segment — remove/blur burned text like watermark repair",
+        "note": (
+            "burned-in text → direct temporal salvage (hue=s=0 + boxblur=10:2 twice, "
+            "enable=between). delogo is fallback only — it stretches colored chips. "
+            "not cut/dodge-first"
+        ),
     }
 
 
@@ -255,30 +498,62 @@ def _inset_box(box: list[int], width: int, height: int, margin: int = 2) -> list
     return [x, y, w, h]
 
 
+def _region_intervals(region: dict[str, Any]) -> list[tuple[float, float]]:
+    raw = region.get("intervals")
+    if isinstance(raw, list) and raw:
+        out: list[tuple[float, float]] = []
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                out.append((float(item[0]), float(item[1])))
+        return out
+    if region.get("t0") is not None and region.get("t1") is not None:
+        return [(float(region["t0"]), float(region["t1"]))]
+    return []
+
+
+def _enable_clause(region: dict[str, Any]) -> str:
+    """ffmpeg timeline enable. Commas are escaped so the filtergraph does not split."""
+    intervals = _region_intervals(region)
+    if not intervals:
+        return ""
+    parts = [f"between(t\\,{start:.2f}\\,{end:.2f})" for start, end in intervals]
+    return ":enable='" + "+".join(parts) + "'"
+
+
+def _boxblur_steps(w: int, h: int) -> str:
+    """Proven chain: desaturate, then boxblur=10:2 twice.
+
+    Radius stays 10 on every ROI that can hold it (754595 chips are >=48px).
+    Smaller crops clamp the radius so ffmpeg does not reject the graph.
+    """
+    radius = min(PROVEN_BLUR_RADIUS, max(1, min(int(w), int(h)) - 1))
+    step = f"boxblur={radius}:{PROVEN_BLUR_POWER}"
+    return f"hue=s=0,{step},{step}"
+
+
 def _delogo_filter(regions: list[dict[str, Any]], width: int, height: int) -> str:
     parts = []
     for region in regions:
         x, y, w, h = _inset_box(region["box"], width, height)
-        parts.append(f"delogo=x={x}:y={y}:w={w}:h={h}:show=0")
+        parts.append(f"delogo=x={x}:y={y}:w={w}:h={h}:show=0{_enable_clause(region)}")
     return ",".join(parts)
 
 
-def _boxblur_filter_labeled(regions: list[dict[str, Any]]) -> str:
+def _boxblur_filter_labeled(regions: list[dict[str, Any]], width: int = 0, height: int = 0) -> str:
+    """Temporal hug-ROI: hue=s=0 + dual boxblur=10:2 + overlay enable=between(t,t0,t1)."""
     n = len(regions)
-    if n == 1:
-        x, y, w, h = regions[0]["box"]
-        return (
-            f"[0:v]crop={w}:{h}:{x}:{y},boxblur=10:1[b];"
-            f"[0:v][b]overlay={x}:{y}[outv]"
-        )
     splits = "".join(f"[s{i}]" for i in range(n))
-    filters = [f"[0:v]split={n}{splits}"]
-    last = "[0:v]"
+    filters = [f"[0:v]split={n + 1}[base]{splits}"]
+    last = "[base]"
     for i, region in enumerate(regions):
-        x, y, w, h = region["box"]
-        filters.append(f"[s{i}]crop={w}:{h}:{x}:{y},boxblur=10:1[b{i}]")
+        x, y, w, h = (int(v) for v in region["box"])
+        if width and x + w > width:
+            w = max(2, width - x)
+        if height and y + h > height:
+            h = max(2, height - y)
+        filters.append(f"[s{i}]crop={w}:{h}:{x}:{y},{_boxblur_steps(w, h)}[b{i}]")
         label = "[outv]" if i == n - 1 else f"[v{i}]"
-        filters.append(f"{last}[b{i}]overlay={x}:{y}{label}")
+        filters.append(f"{last}[b{i}]overlay={x}:{y}{_enable_clause(region)}{label}")
         last = f"[v{i}]"
     return ";".join(filters)
 
@@ -289,7 +564,7 @@ def remove_or_blur_burn(
     output: Path,
     *,
     ffmpeg: str,
-    engine: str = "delogo",
+    engine: str = "boxblur",
 ) -> dict[str, Any]:
     source = Path(source)
     output = Path(output)
@@ -304,7 +579,7 @@ def remove_or_blur_burn(
         vf = _delogo_filter(regions, width, height)
         cmd = [ffmpeg, "-y", "-i", str(source), "-vf", vf, "-c:a", "copy", str(output)]
     elif engine == "boxblur":
-        fc = _boxblur_filter_labeled(regions)
+        fc = _boxblur_filter_labeled(regions, width, height)
         cmd = [
             ffmpeg, "-y", "-i", str(source),
             "-filter_complex", fc, "-map", "[outv]", "-map", "0:a?",
@@ -386,7 +661,7 @@ def salvage_demoted_burn(
     duration: float,
     workdir: Path,
     ffmpeg: str,
-    engines: tuple[str, ...] = ("delogo", "boxblur", "lama"),
+    engines: tuple[str, ...] = DEFAULT_SALVAGE_ENGINES,
     lama_model: Path | None = None,
     log: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -397,8 +672,10 @@ def salvage_demoted_burn(
         return decision
 
     frames = decision.get("frames") or []
-    hint = repair_hint_from_decision(decision, width, height) or {
-        "mask_spec": mask_spec_from_frames(frames, width, height),
+    hint = repair_hint_from_decision(decision, width, height, duration=duration) or {
+        "mask_spec": mask_spec_from_frames(
+            frames, width, height, times=decision.get("screen_times"), duration=duration,
+        ),
         "regions": text_regions_from_frames(frames),
     }
     decision = {**decision, "repair_hint": hint}
@@ -441,7 +718,7 @@ def salvage_demoted_burn(
                 "usable_s": round(float(duration), 2),
                 "needs_visual_review": True,
                 "reason": (
-                    f"烧录文字切/躲不足，已用 {result.get('engine') or engine} 去字/模糊 salvage"
+                    f"烧录文字直接 salvage：{result.get('engine') or engine} 时间轴去字/模糊"
                     f"（regions={hint.get('regions')}，需目视复核）"
                 ),
                 "repair_hint": hint,
@@ -453,3 +730,81 @@ def salvage_demoted_burn(
             errors.append(f"{engine}: {exc}")
             log(f"burn salvage {engine} failed: {exc}")
     return {**decision, "salvage_attempted": True, "salvage_errors": errors, "repair_hint": hint}
+
+
+def mask_from_plan(plan: dict[str, Any], width: int, height: int) -> dict[str, Any]:
+    """Turn a hand ROI plan into a mask spec. Each box must pass assert_safe_roi."""
+    regions: list[dict[str, Any]] = []
+    for index, item in enumerate(plan.get("regions") or []):
+        box = assert_safe_roi(list(item["box"]), width, height, name=str(item.get("name") or f"plan_{index}"))
+        region: dict[str, Any] = {
+            "name": str(item.get("name") or f"plan_{index}"),
+            "mode": "box",
+            "box": box,
+        }
+        if item.get("intervals"):
+            region["intervals"] = item["intervals"]
+        elif item.get("t0") is not None and item.get("t1") is not None:
+            region["t0"] = float(item["t0"])
+            region["t1"] = float(item["t1"])
+            region["intervals"] = [[float(item["t0"]), float(item["t1"])]]
+        regions.append(region)
+    if not regions:
+        raise UnsafeBurnRoiError("ROI plan has no regions")
+    return {"dimensions": [int(width), int(height)], "regions": regions, "purpose": "burned_text_salvage"}
+
+
+def _probe_video(path: Path, ffmpeg: str) -> tuple[int, int, float]:
+    from .collect import probe_media
+
+    probe = probe_media(Path(path), ffmpeg=ffmpeg)
+    if not probe.width or not probe.height or not probe.duration:
+        raise RuntimeError(f"could not probe {path}")
+    return int(probe.width), int(probe.height), float(probe.duration)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Re-run burn salvage on one clip.
+
+    Examples:
+      python -m workflow.unattended.burn_repair --source CLIP.mp4 --decision decision.json --workdir ./burn_out
+      python -m workflow.unattended.burn_repair --source CLIP.mp4 --plan roi_plan.json --workdir ./burn_out
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Salvage burned-in subtitles (temporal hue+boxblur; delogo fallback)")
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--workdir", type=Path, required=True)
+    parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--decision", type=Path, help="screening decision JSON (demote_reason=burn_cut)")
+    parser.add_argument("--plan", type=Path, help="ROI plan JSON {regions:[{box:[x,y,w,h], t0, t1}]}")
+    parser.add_argument("--width", type=int)
+    parser.add_argument("--height", type=int)
+    parser.add_argument("--duration", type=float)
+    args = parser.parse_args(argv)
+    width, height, duration = args.width, args.height, args.duration
+    if not (width and height and duration):
+        pw, ph, pd = _probe_video(args.source, args.ffmpeg)
+        width = width or pw
+        height = height or ph
+        duration = duration or pd
+    if args.plan:
+        plan = json.loads(args.plan.read_text(encoding="utf-8"))
+        spec = mask_from_plan(plan, int(width), int(height))
+        out = args.workdir / "salvaged_boxblur.mp4"
+        result = remove_or_blur_burn(args.source, spec, out, ffmpeg=args.ffmpeg, engine="boxblur")
+    elif args.decision:
+        decision = json.loads(args.decision.read_text(encoding="utf-8"))
+        result = salvage_demoted_burn(
+            decision, args.source,
+            width=int(width), height=int(height), duration=float(duration),
+            workdir=args.workdir, ffmpeg=args.ffmpeg,
+        )
+    else:
+        raise SystemExit("pass --plan or --decision")
+    print(json.dumps({k: v for k, v in result.items() if k != "cmd"}, ensure_ascii=False, indent=2, default=str))
+    return 0 if result.get("ok") or result.get("salvaged") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
