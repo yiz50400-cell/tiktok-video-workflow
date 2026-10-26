@@ -1,11 +1,12 @@
 """Unattended TikTok footage collection (stage A/B of ``once --produce``).
 
-A. discovery: Codex (gpt-5.6-sol, read-only sandbox, live web search, ChatCut MCP
-   disabled) proposes real TikTok creator videos. Round 1 prefers the task market;
-   later rounds expand across global SUPPORTED_COLLECTION_MARKETS. Delivery VO/captions stay on task market.
-   Speed path: form-factor hints in round-1 queries, search-budget in the prompt,
-   seed-cache can seed the pool (never replaces discovery when short of batch target),
-   reconnect abort, parallel downloads (see discover_speed.py).
+A. discovery: prefer local Evil0ctal (Docker guest+browser) keyword search for
+   TikTok page URLs when the API is healthy; otherwise Codex (gpt-5.6-sol, read-only
+   sandbox, live web search, ChatCut MCP disabled). Round 1 prefers the task market;
+   later Codex rounds expand across global SUPPORTED_COLLECTION_MARKETS. Delivery
+   VO/captions stay on task market. Evil only returns URLs — download stays yt-dlp.
+   Speed path: form-factor hints, seed-cache, reconnect abort, parallel downloads
+   (see discover_speed.py / evil_discovery.py).
 B. retrieval + validation (deterministic Python): yt-dlp download, ffmpeg probe,
    vertical / duration / source checks, normalised H.264 copy and contact sheets.
 
@@ -1143,8 +1144,78 @@ def collect_footage(
             log(
                 f"采集-种子仅 {len(kept)} 条可用（seed_screen_ok={seed_screen_ok}，"
                 f"未达批次目标 min_clips≥{min_clips} / {summary}），"
-                "继续 Codex 检索并扩区，不因种子命中提前结束"
+                "继续发现检索并扩区，不因种子命中提前结束"
             )
+
+    # --- 0.5 Evil0ctal default discovery (URL search only; download = yt-dlp) ---
+    # Healthy local Docker+Evil → thicken candidate pool. Probe/key miss → Codex.
+    enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
+    pool_full = enough if screen else len(kept) >= min_clips
+    if not pool_full:
+        from .evil_discovery import try_evil_discovery
+
+        beauty_expand = form_hints.profile in BEAUTY_CROSS_MARKET_PROFILES
+        evil_markets = search_markets_for_round(
+            str(request.get("market") or "MX"),
+            round_num=2 if beauty_expand else 1,
+            expand_all=beauty_expand,
+        )
+        started = time.time()
+        evil_rows, evil_meta = try_evil_discovery(
+            request,
+            form_hints,
+            max_candidates=max_candidates,
+            markets=evil_markets,
+            seen=seen,
+            used_ids=used_ids,
+            log=log,
+        )
+        add_time("evil_discover_s", started)
+        timings["evil_probe_ok"] = 1.0 if evil_meta.get("probe_ok") else 0.0
+        timings["evil_urls"] = float(evil_meta.get("url_count") or 0)
+        timings["evil_queries"] = float(evil_meta.get("query_count") or 0)
+        if evil_meta.get("degraded"):
+            log(f"采集-Evil 降级 Codex web_search：{evil_meta.get('reason')}")
+        elif evil_rows:
+            evil_cands: list[Candidate] = []
+            for item in evil_rows:
+                norm = normalize_tiktok_url(str(item.get("url") or ""))
+                if not norm:
+                    continue
+                canonical, account, video_id = norm
+                if video_id in seen:
+                    continue
+                seen.add(video_id)
+                evil_cands.append(Candidate(
+                    url=canonical,
+                    account=account or item.get("account"),
+                    video_id=video_id,
+                    why=item.get("why") or "evil search",
+                    product_match_evidence=item.get("product_match_evidence"),
+                ))
+            all_candidates += evil_cands
+            log(f"采集-Evil 候选入库准备：{len(evil_cands)} 条（范围 {'/'.join(evil_markets)}）")
+            if evil_cands:
+                try:
+                    ingest_candidates(evil_cands, rnd=0, tag=".evil")
+                except TikTokUnreachableError as exc:
+                    timings["discovery_calls"] = discovery_calls
+                    log(str(exc))
+                    return finish(False, str(exc), kept, all_candidates, keywords or [product])
+                enough, summary = _screen_ok(kept) if screen else (len(kept) >= min_clips, f"{len(kept)} 条")
+                if enough if screen else len(kept) >= min_clips:
+                    timings["discovery_calls"] = discovery_calls
+                    timings["discovery_source"] = 1.0  # 1 = evil-primary
+                    return finish(
+                        True,
+                        f"采集完成（Evil 加厚发现，未跑 Codex 检索）：累计{summary}",
+                        kept,
+                        all_candidates,
+                        keywords or [product],
+                    )
+                log(
+                    f"采集-Evil 后仍不足（{summary}），继续 Codex web_search 补采"
+                )
 
     for rnd in range(1, max(1, discover_rounds) + 1):
         # If seeds already almost enough, still allow one discovery round only when needed.

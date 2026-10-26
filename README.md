@@ -4,7 +4,7 @@
 
 当前范围到成片、独立字幕、中文说明和本机交付包结束；紫鸟、TikTok Studio、上传、草稿、挂商品和发布由员工自行手动完成。交付采用 GitHub 源码下载与本机部署。
 
-客户用一句话说清商品、市场、数量和风格（可附素材路径）。无人值守自动采集/混剪、内部本地化与复核、配音剪辑并写入 `delivery/`。仅当客户**明确要求**对话精修时，才走员工交互审稿。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，可选 Docker+Evil 加厚发现见[Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
+客户用一句话说清商品、市场、数量和风格（可附素材路径）。无人值守自动采集/混剪、内部本地化与复核、配音剪辑并写入 `delivery/`。仅当客户**明确要求**对话精修时，才走员工交互审稿。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，保量采集请装 Docker+Evil（默认发现；未装则降级 Codex 搜）见[Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
 
 
 ## 获取源码
@@ -67,9 +67,9 @@ uv pip install --python .venv/bin/python -r requirements.lock.txt -r requirement
 
 旧网页原型与 Electron 桌面壳已移入本机 `_archive/`，不进入源码仓库；Windows 安装包路线已停止（见 [历史归档](docs/Windows桌面交付-2026-10-14.md)）。默认业务服务返回 headless 状态。
 
-## 可选：Docker + Evil0ctal（采集旁路）
+## Docker + Evil0ctal（保量默认发现）
 
-默认采集仍是 Codex web search → yt-dlp，**不必**安装。若要在客户机自建 Evil0ctal（guest+browser）加厚 TikTok URL 发现，再把 URL 列表交给既有 yt-dlp/初筛，见 [Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)。此旁路不改变主仓默认发现代码。
+客户机要稳增素材量时，**优先安装** Docker Desktop + Evil0ctal（guest+browser）。就绪后无人值守默认走 Evil 搜 TikTok 页 URL → 本仓 yt-dlp/初筛；未装或探针失败则**自动降级** Codex web search → yt-dlp（仍能出片）。安装与密钥见 [Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)。
 
 ## Windows 源码部署
 
