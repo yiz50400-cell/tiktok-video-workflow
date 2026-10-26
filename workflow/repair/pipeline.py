@@ -19,8 +19,6 @@ import cv2
 import imageio_ffmpeg
 import numpy as np
 
-from .intervals import region_active_at
-
 
 PARAM_VERSION = "repair-lama-v1"
 MODEL_MD5 = "e3aa4aaa15225a33ec84f9f4bc47e500"
@@ -161,8 +159,6 @@ def _frame_mask(frame, second, spec, prepared):
     scores = {}
     calibrated = []
     for region, core, patch in prepared:
-        if not region_active_at(region, second):
-            continue
         mode = region["mode"]
         if mode == "calibrated":
             x, y, w, h = region["box"]

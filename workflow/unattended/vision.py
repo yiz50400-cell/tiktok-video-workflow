@@ -2,8 +2,8 @@
 
 * ``screen_clips``  — BEFORE editing: per clip, check 12 sampled frames for same product
   type / form factor, burned-in source text, watermarks and lifestyle-only frames, and derive
-  ``usable_segments`` (only these may be cut into the timeline). Burned-in text is direct
-  salvage (tight temporal transparent blur), not cut/dodge-first; wrong-product still hard-kills.
+  ``usable_segments`` (only these may be cut into the timeline). Burned-in text frames are
+  cut around / demoted — never a sole whole-clip hard reject; wrong-product still hard-kills.
 * ``check_shots``   — after editing (deterministic): every shot lies inside a usable segment,
   hook and final CTA shots come from product-prominent segments.
 * ``review_export`` — AFTER export: sample one frame per shot from the finished video and
@@ -131,10 +131,9 @@ CROP_REGIONS = ("top", "bottom")
 def frame_crop(frame: dict[str, Any]) -> str | None | bool:
     """None = usable as is; "top"/"bottom" = usable after cropping that text band; False = skip frame.
 
-    Heavy burned-in text is not a clean segment. Burn-dominated clips are demoted for
-    direct salvage; a few burned frames in an otherwise clean clip stay out of
-    usable_segments. Only *small* corner text at top/bottom with crop_ok may be kept
-    with a crop hint. Wrong-product is a hard reject.
+    Burned-in source text must not whole-reject a clip: heavy / non-croppable text frames are
+    cut around (dropped from usable_segments). Only *small* corner text at top/bottom with
+    crop_ok may be kept with a crop hint. Wrong-product is handled separately as a hard reject.
     """
     if not frame.get("product_visible") or frame.get("watermark") or frame.get("lifestyle_only"):
         return False
@@ -142,7 +141,7 @@ def frame_crop(frame: dict[str, Any]) -> str | None | bool:
     if burned == "none":
         return None
     if burned == "heavy":
-        return False  # not a clean segment; burn-dominated clips are salvaged instead
+        return False  # cut around — do not crop-salvage heavy burn-in
     region = str(frame.get("text_region") or "")
     if region in CROP_REGIONS and frame.get("crop_ok"):
         return region
@@ -153,60 +152,27 @@ def frame_usable(frame: dict[str, Any]) -> bool:
     return frame_crop(frame) is not False
 
 
-def _other_reject_count(rejected_frames: dict[str, int]) -> int:
-    return (
-        int(rejected_frames.get("watermark") or 0)
-        + int(rejected_frames.get("lifestyle_only") or 0)
-        + int(rejected_frames.get("no_product") or 0)
-    )
-
-
 def _burn_dominated(rejected_frames: dict[str, int]) -> bool:
     """True when burned-in text is the main reason clean frames are missing (not wrong-product)."""
     burned = int(rejected_frames.get("burned_text") or 0)
     heavy = int(rejected_frames.get("burned_text_heavy") or 0)
-    return burned >= 1 and (burned + heavy) >= _other_reject_count(rejected_frames)
-
-
-def _burn_direct_salvage(rejected_frames: dict[str, int], n_frames: int) -> bool:
-    """Majority of samples carry burned-in text, and burn outweighs other defects.
-
-    Those clips go to remove/blur even if a few clean frames remain.
-    Sparse burns (not a majority) still keep the clean segments.
-    """
-    burned = int(rejected_frames.get("burned_text") or 0)
-    n = max(int(n_frames), 1)
-    if burned < 1 or _other_reject_count(rejected_frames) > burned:
-        return False
-    return burned * 2 >= n
-
-
-def _stamp_frame_times(frames: list[Any], times: list[float]) -> list[Any]:
-    stamped: list[Any] = []
-    for index, frame in enumerate(frames or []):
-        if not isinstance(frame, dict):
-            stamped.append(frame)
-            continue
-        item = dict(frame)
-        if item.get("t") is None and item.get("time_s") is None:
-            idx = int(item.get("i", index))
-            if 0 <= idx < len(times):
-                item["t"] = round(float(times[idx]), 2)
-        stamped.append(item)
-    return stamped
+    other = (
+        int(rejected_frames.get("watermark") or 0)
+        + int(rejected_frames.get("lifestyle_only") or 0)
+        + int(rejected_frames.get("no_product") or 0)
+    )
+    return burned >= 1 and (burned + heavy) >= other
 
 
 def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: float) -> dict[str, Any]:
     """Turn one clip's vision verdict into accept/reject + usable segments.
 
-    Binding (IZ/Yang 2026-10-26): burned-in source text is direct salvage
-    (temporal transparent blur), not cut/dodge-first. Burn-dominated clips are
-    demoted for salvage even if a few clean frames remain. Wrong-product still hard-kills.
-    ROI safety lives in burn_repair (hug subtitle bbox; no tall/face smear).
+    Binding (IZ): burned-in source text must NOT whole-reject — cut around text frames /
+    demote. Wrong-product still hard-rejects. Prefer clean (no burn) segments for the pool.
     """
     if not isinstance(verdict, dict):
         return {"accepted": False, "demoted": False, "reason": "视觉初筛无结果", "usable_segments": [], "frames": []}
-    frames = _stamp_frame_times(verdict.get("frames") or [], times)
+    frames = verdict.get("frames") or []
     by_index = {int(f.get("i", k)): f for k, f in enumerate(frames) if isinstance(f, dict)}
     if not verdict.get("same_product"):
         return {"accepted": False, "demoted": False, "usable_segments": [], "frames": frames,
@@ -245,27 +211,20 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
         "rejected_frames": rejected_frames,
         "burned_frames_cut": burned_frames_cut,
         "usable_s": round(usable_s, 2),
-        "screen_times": [round(float(t), 2) for t in times],
     }
-    direct = _burn_direct_salvage(rejected_frames, len(by_index))
-    if direct or not segments:
-        # Direct salvage when burn dominates, or when burn left no clean window.
-        # Never treat that as a wrong-product hard kill.
-        if direct or _burn_dominated(rejected_frames):
-            from .burn_repair import text_regions_from_frames
-            regions = text_regions_from_frames(list(by_index.values()))
+    if not segments:
+        # Soft demote when burn-in left no clean window; never treat as wrong-product hard kill.
+        if _burn_dominated(rejected_frames):
             return {
                 **base,
                 "accepted": False,
                 "demoted": True,
                 "demote_reason": "burn_cut",
-                "repair_candidate": True,
-                "repair_regions": regions,
                 "usable_segments": [],
                 "reason": (
-                    f"烧录文字直接 salvage（heavy={rejected_frames['burned_text_heavy']}, "
+                    f"烧录文字切/躲后无净段（heavy={rejected_frames['burned_text_heavy']}, "
                     f"burned={rejected_frames['burned_text']}/{max(len(by_index), 1)}，"
-                    f"帧问题 {rejected_frames}）— demote，透明模糊去字，不优先切/躲；非错品硬杀"
+                    f"帧问题 {rejected_frames}）— demote，非错品硬杀"
                 ),
             }
         return {
@@ -275,10 +234,10 @@ def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: fl
             "usable_segments": [],
             "reason": f"无可用片段（帧问题统计 {rejected_frames}）",
         }
-    # Sparse burns only: keep the clean segments. Burn-dominated clips never reach here.
+    # Keep clip when any clean / croppable segments remain — do NOT whole-reject for burn volume.
     reason = verdict.get("reason") or "同款且有可用片段"
     if burned_frames_cut:
-        reason = f"{reason}（烧录文字帧 {burned_frames_cut} 个未进净段，保留净段 {usable_s:.1f}s）"
+        reason = f"{reason}（已切/躲烧录文字帧 {burned_frames_cut} 个，保留净段 {usable_s:.1f}s）"
     return {
         **base,
         "accepted": True,
