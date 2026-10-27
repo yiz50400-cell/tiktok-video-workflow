@@ -258,6 +258,46 @@ def _producer_with(tmp_path, runner_result_name: str, review_queue=None):
     return inbox, producer, seen
 
 
+
+def test_verify_rejects_missing_export_mcp_when_other_chatcut_used(tmp_path, clip_list):
+    """Rough-cut-only Codex (edit/push, no export) must fail verify when events exist."""
+    export = _make_video(tmp_path / "out.mp4", w=720, h=1280, seconds=10, audio="silent", cbr=True)
+    events = tmp_path / "codex-events.jsonl"
+    lines = [
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "server": "chatcut_desktop", "tool": "edit_item"}}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "server": "chatcut_desktop", "tool": "push_asset"}}),
+    ]
+    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    verdict = verify_production(
+        result_path=_result(tmp_path, export, [clip_list[0]["path"]]),
+        export_paths=[export],
+        clips=clip_list,
+        events_path=events,
+    )
+    assert not verdict.ok
+    assert "export" in verdict.reason.lower() or "粗剪" in verdict.reason
+
+
+def test_verify_passes_when_export_mcp_present(tmp_path, clip_list):
+    export = _make_video(tmp_path / "out.mp4", w=720, h=1280, seconds=10, audio="silent", cbr=True)
+    events = tmp_path / "codex-events.jsonl"
+    lines = [
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "server": "chatcut_desktop", "tool": "edit_item"}}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "server": "chatcut_desktop", "tool": "export"}}),
+    ]
+    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    verdict = verify_production(
+        result_path=_result(tmp_path, export, [clip_list[0]["path"]]),
+        export_paths=[export],
+        clips=clip_list,
+        events_path=events,
+    )
+    assert verdict.ok, verdict.reason
+
 def test_producer_production_mode_collects_and_verifies(tmp_path):
     inbox, producer, seen = _producer_with(tmp_path, "墨西哥licuadora TikTok 无人值守 task_prod")
     result = producer.produce(task_id="task_prod", workflow_job_id="job_1", request=REQ)

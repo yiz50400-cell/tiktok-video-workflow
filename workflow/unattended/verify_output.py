@@ -190,6 +190,15 @@ def verify_production(
         return VerifyResult(False, f"调用了禁用工具：{scan['forbidden']}", details)
     if scan["computer_use_items"]:
         return VerifyResult(False, "Codex 事件中出现 Computer Use", details)
+    # Cheap completeness gate: if Codex recorded any chatcut_desktop MCP activity,
+    # it must have called export. Rough-cut-only bail (edit_item then exit 0) fails here.
+    chatcut_calls = [k for k in (scan.get("calls") or {}) if str(k).startswith("chatcut_desktop.")]
+    if scan.get("available") and chatcut_calls and "chatcut_desktop.export" not in scan["calls"]:
+        return VerifyResult(
+            False,
+            "Codex 未调用 chatcut_desktop.export（仅粗剪/无导出），拒绝当作成片",
+            details,
+        )
     # Keep legacy single-export detail key for older tests.
     if expect == 1 and details["exports"]:
         details["export"] = details["exports"][0].get("export", {})

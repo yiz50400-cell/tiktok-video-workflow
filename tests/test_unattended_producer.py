@@ -5,7 +5,13 @@ import subprocess
 from pathlib import Path
 
 from workflow.unattended.inbox import Inbox
-from workflow.unattended.producer import ProduceOptions, Producer, build_codex_command
+from workflow.unattended.producer import (
+    MIN_DELIVERY_BYTES,
+    ProduceOptions,
+    Producer,
+    build_codex_command,
+    qualifying_delivery_videos,
+)
 from workflow.unattended.supervisor import Supervisor
 
 
@@ -63,7 +69,7 @@ def test_producer_success_copies_delivery_and_audit(tmp_path):
         task_dir = inbox.task_dir("task_produce_001")
         exports = task_dir / "exports"
         video = exports / "out.mp4"
-        video.write_bytes(b"fake-video")
+        video.write_bytes(b"x" * MIN_DELIVERY_BYTES)
         (task_dir / "produce-result.json").write_text(
             json.dumps({"ok": True, "export_paths": [str(video)], "renderer": "chatcut"}),
             encoding="utf-8",
@@ -302,7 +308,11 @@ def test_producer_guard_can_be_disabled(tmp_path):
     def fake_runner(prompt, **kwargs):
         task_dir = inbox.task_dir("task_produce_001")
         video = task_dir / "exports" / "out.mp4"
-        video.write_bytes(b"fake-video")
+        video.write_bytes(b"x" * MIN_DELIVERY_BYTES)
+        (task_dir / "produce-result.json").write_text(
+            json.dumps({"ok": True, "export_paths": [str(video)], "renderer": "chatcut"}),
+            encoding="utf-8",
+        )
         agent_log.write_text(_agent_log_lines(datetime.now(timezone.utc) + timedelta(seconds=1)), encoding="utf-8")
         return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout="ok", stderr="")
 
@@ -542,9 +552,17 @@ def test_producer_empty_export_fails_fast_no_delivery(tmp_path, monkeypatch):
     )
     assert result.status == "produce_failed"
     assert result.delivery_paths == []
-    assert "制作未生成成片文件" in (result.reason or "") or "无可用导出" in (result.reason or "") or "exports=0" in (result.reason or "")
+    reason = result.reason or ""
+    assert (
+        "制作未生成成片文件" in reason
+        or "无可用导出" in reason
+        or "exports=0" in reason
+        or "ok!=true" in reason
+        or "delivery 为空" in reason
+    ), reason
+    assert "假成功" in reason or "delivery 为空" in reason or "ok!=true" in reason
     # Must not claim successful partial delivery.
-    assert "已交付 1/10" not in (result.reason or "")
+    assert "已交付 1/10" not in reason
 
 
 def test_eye_cream_form_hints_prefer_apply():
@@ -555,3 +573,152 @@ def test_eye_cream_form_hints_prefer_apply():
     assert any("apply" in q or "aplicar" in q for q in h.prefer_queries)
     assert text_suggests_wrong_form("tiktok mascara review", h)
     assert text_suggests_wrong_form("contorno de ojos apply under eye", h) is None
+
+
+def test_collect_exports_ignores_orphan_rglob(tmp_path):
+    """Leftover mp4 under exports/ must not count unless planned or in result paths."""
+    inbox = Inbox(tmp_path / "data")
+    task_dir = inbox.task_dir("task_orphan")
+    exports = task_dir / "exports"
+    exports.mkdir(parents=True)
+    orphan = exports / "orphan-leftover.mp4"
+    orphan.write_bytes(b"x" * MIN_DELIVERY_BYTES)
+    result_path = task_dir / "produce-result.json"
+    result_path.write_text(
+        json.dumps({"ok": True, "export_paths": [str(exports / "missing-planned.mp4")]}),
+        encoding="utf-8",
+    )
+    producer = Producer(inbox, probe=lambda: {"healthy": True}, log=lambda _m: None)
+    producer._export_paths_planned = [exports / "MX-task_orphan-chatcut.mp4"]
+    found = producer._collect_exports(exports, result_path)
+    assert found == []
+
+
+def test_collect_exports_accepts_result_and_planned(tmp_path):
+    inbox = Inbox(tmp_path / "data")
+    task_dir = inbox.task_dir("task_paths")
+    exports = task_dir / "exports"
+    exports.mkdir(parents=True)
+    planned = exports / "MX-task_paths-chatcut.mp4"
+    planned.write_bytes(b"x" * MIN_DELIVERY_BYTES)
+    listed = exports / "listed.mp4"
+    listed.write_bytes(b"x" * MIN_DELIVERY_BYTES)
+    (exports / "orphan.mp4").write_bytes(b"x" * MIN_DELIVERY_BYTES)
+    result_path = task_dir / "produce-result.json"
+    result_path.write_text(
+        json.dumps({"ok": True, "export_paths": [str(listed)]}),
+        encoding="utf-8",
+    )
+    producer = Producer(inbox, probe=lambda: {"healthy": True}, log=lambda _m: None)
+    producer._export_paths_planned = [planned]
+    found = {p.name for p in producer._collect_exports(exports, result_path)}
+    assert found == {"listed.mp4", "MX-task_paths-chatcut.mp4"}
+    assert "orphan.mp4" not in found
+
+
+def test_producer_rejects_tiny_delivery_as_false_success(tmp_path, monkeypatch):
+    """exit 0 + tiny export copy must not become status=produced."""
+    from workflow.unattended.collect import Clip
+
+    inbox = Inbox(tmp_path / "data")
+    (tmp_path / "a.mp4").write_bytes(b"x" * 4000)
+    (tmp_path / "b.mp4").write_bytes(b"x" * 4000)
+    segs = [{"start_s": 0, "end_s": 20, "product_prominent": True}]
+
+    def _clip(cid, name):
+        return Clip(
+            clip_id=cid,
+            path=str(tmp_path / name),
+            source_url=f"https://www.tiktok.com/@a/video/{cid}",
+            account="a",
+            title="eye cream",
+            duration=60.0,
+            width=1080,
+            height=1920,
+            keyword_hit=True,
+            visible_metrics={},
+            sheet_path="",
+            sheet_times=[],
+            usable_segments=segs,
+        )
+
+    class FakeCollection:
+        ok = True
+        reason = "ok"
+        clips = [_clip("111", "a.mp4"), _clip("222", "b.mp4")]
+        candidates = []
+        keywords = ["eye cream"]
+        timings = {}
+        product_definition = "眼霜"
+        screened_out = []
+        manifest_path = None
+
+    def fake_runner(prompt, **kwargs):
+        task_dir = inbox.task_dir("task_tiny")
+        # Write under the planned production name so _collect_exports finds it,
+        # but keep bytes under MIN_DELIVERY_BYTES so qualifying_delivery fails.
+        exports = task_dir / "exports"
+        exports.mkdir(parents=True, exist_ok=True)
+        video = exports / "MX-task_tiny-chatcut.mp4"
+        video.write_bytes(b"tiny")
+        (task_dir / "produce-result.json").write_text(
+            json.dumps({
+                "ok": True,
+                "project_name": "墨西哥眼霜 TikTok 无人值守 task_tiny",
+                "export_paths": [str(video)],
+                "footage_used": [{"path": str(tmp_path / "a.mp4"), "clip_id": "111"}],
+                "shots": [
+                    {"path": str(tmp_path / "a.mp4"), "source_in_s": 0.5, "duration_s": 2.0,
+                     "start_frame": 0, "duration_frames": 60},
+                    {"path": str(tmp_path / "b.mp4"), "source_in_s": 0.5, "duration_s": 2.0,
+                     "start_frame": 60, "duration_frames": 60},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout="", stderr="")
+
+    class Gate:
+        ok = True
+        reason = "ready"
+        details = {}
+
+    monkeypatch.setattr(
+        "workflow.unattended.producer.verify_codex_chatcut_mcp_ready",
+        lambda **kwargs: Gate(),
+    )
+
+    # Bypass media verify (tiny file is not a real H.264) so we reach the delivery gate.
+    class Pass:
+        ok = True
+        reason = "pass"
+        details = {}
+
+    monkeypatch.setattr(
+        "workflow.unattended.verify_output.verify_production",
+        lambda **kwargs: Pass(),
+    )
+
+    producer = Producer(
+        inbox,
+        probe=lambda: {"healthy": True},
+        codex_runner=fake_runner,
+        options=ProduceOptions(
+            mode="production",
+            project_root=tmp_path,
+            chatcut_agent_log=None,
+            collector=lambda *a, **k: FakeCollection(),
+            reviewer=lambda *a, **k: ([], {}),
+            review_retries=0,
+        ),
+        log=lambda _m: None,
+    )
+    result = producer.produce(
+        task_id="task_tiny",
+        workflow_job_id="job_tiny",
+        request=valid_payload(task_id="task_tiny", product="眼霜", count=1),
+    )
+    assert result.status == "produce_failed", result.reason
+    assert "假成功" in (result.reason or "") or "delivery 为空" in (result.reason or "")
+    assert result.delivery_paths == []
+    assert qualifying_delivery_videos(inbox.task_dir("task_tiny") / "delivery") == []
