@@ -1057,32 +1057,48 @@ def collect_footage(
             clip.screen_grid, clip.screen_times = d.get("screen_grid"), d.get("screen_times") or []
             if clip.screen_times and not decision.get("screen_times"):
                 decision = {**decision, "screen_times": [round(float(t), 2) for t in clip.screen_times]}
-            # IZ 2026-10-26: burned-in text → direct salvage. LaMa fill is the look.
-            # Boxblur/delogo run only if LaMa cannot. No hue-desat gray bars.
-            # Wrong-product never reaches this branch.
+            # IZ/Yang 2026-10-27: default = defer full-source LaMa. Burn KEEP enters
+            # unrepaired; produce LaMa-only timeline-used 3–8s windows (AC-8 still applies).
+            # Opt-in full-clip salvage: VW_COLLECT_FULL_BURN_SALVAGE=1 (lama→boxblur→delogo).
+            # Wrong-product never reaches this branch. Boxblur/delogo never the default look.
             if (
                 not decision.get("accepted")
                 and decision.get("demoted")
                 and decision.get("demote_reason") == "burn_cut"
                 and clip.path
             ):
+                full_salvage = (os.environ.get("VW_COLLECT_FULL_BURN_SALVAGE") or "").strip().lower() in (
+                    "1", "true", "yes", "on",
+                )
                 try:
-                    from .burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
-                    salvage_dir = Path(screen_dir) / "burn_salvage" / str(clip.clip_id)
-                    decision = salvage_demoted_burn(
-                        decision,
-                        Path(clip.path),
-                        width=int(clip.width),
-                        height=int(clip.height),
-                        duration=float(clip.duration),
-                        workdir=salvage_dir,
-                        ffmpeg=ffmpeg,
-                        engines=DEFAULT_SALVAGE_ENGINES,
-                        log=log,
-                    )
-                    if decision.get("salvaged") and decision.get("salvaged_path"):
-                        clip.path = str(decision["salvaged_path"])
-                        clip.watermark_status = f"burn_salvaged:{decision.get('salvage_engine')}"
+                    if full_salvage:
+                        from .burn_repair import DEFAULT_SALVAGE_ENGINES, salvage_demoted_burn
+                        salvage_dir = Path(screen_dir) / "burn_salvage" / str(clip.clip_id)
+                        decision = salvage_demoted_burn(
+                            decision,
+                            Path(clip.path),
+                            width=int(clip.width),
+                            height=int(clip.height),
+                            duration=float(clip.duration),
+                            workdir=salvage_dir,
+                            ffmpeg=ffmpeg,
+                            engines=DEFAULT_SALVAGE_ENGINES,
+                            log=log,
+                        )
+                        if decision.get("salvaged") and decision.get("salvaged_path"):
+                            clip.path = str(decision["salvaged_path"])
+                            clip.watermark_status = f"burn_salvaged:{decision.get('salvage_engine')}"
+                    else:
+                        from .burn_repair import defer_demoted_burn
+                        decision = defer_demoted_burn(
+                            decision,
+                            width=int(clip.width),
+                            height=int(clip.height),
+                            duration=float(clip.duration),
+                            log=log,
+                        )
+                        if decision.get("deferred_burn_salvage"):
+                            clip.watermark_status = "burn_deferred_segment_lama"
                 except Exception as exc:
                     log(f"  烧录 salvage 异常 {clip.clip_id}：{exc}")
                     decision = {**decision, "salvage_attempted": True, "salvage_errors": [str(exc)]}
@@ -1091,7 +1107,7 @@ def collect_footage(
             cand = next((c for c in all_candidates if c.video_id == clip.clip_id), None)
             if decision.get("accepted"):
                 kept.append(clip)
-                tag = "（burn salvage）" if decision.get("salvaged") else ""
+                tag = ("（burn salvage）" if decision.get("salvaged") else ("（burn deferred→用段 LaMa）" if decision.get("deferred_burn_salvage") else ""))
                 log(f"  初筛通过 {clip.clip_id}{tag}：可用片段 {[(s['start_s'], s['end_s'], s['product_prominent']) for s in clip.usable_segments]}")
             else:
                 state["screened_out"].append(clip)

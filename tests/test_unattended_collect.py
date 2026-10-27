@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -1749,3 +1750,130 @@ def test_beauty_profiles_listed_for_cross_market_expand():
     assert search_markets_for_round("MX", round_num=1) == ["MX"]
     # beauty expand_all path (used by collect for eye_cream/lip_balm)
     assert set(search_markets_for_round("MX", round_num=1, expand_all=True)) == set(SUPPORTED_COLLECTION_MARKETS)
+
+
+def test_defer_demoted_burn_keeps_unrepaired():
+    """Default collect path accepts burn KEEP without running LaMa/boxblur."""
+    from workflow.unattended.burn_repair import defer_demoted_burn, full_span_segments
+    decision = {
+        "accepted": False,
+        "demoted": True,
+        "demote_reason": "burn_cut",
+        "repair_candidate": True,
+        "frames": [
+            {"i": 0, "t": 0.5, "burned_text": "heavy", "text_region": "bottom",
+             "text_bbox": [40, 900, 400, 40], "product_prominent": True},
+        ],
+        "screen_times": [0.5],
+        "usable_segments": [],
+        "reason": "burn",
+    }
+    out = defer_demoted_burn(decision, width=576, height=1024, duration=12.0)
+    assert out["accepted"] is True
+    assert out.get("deferred_burn_salvage") is True
+    assert out.get("needs_segment_lama") is True
+    assert out.get("salvaged") is False
+    assert not out.get("salvaged_path")
+    assert out["usable_segments"] == full_span_segments(12.0, product_prominent=True)
+    assert out.get("repair_hint", {}).get("mask_spec")
+
+
+def test_collect_full_burn_salvage_opt_in_env(monkeypatch):
+    """VW_COLLECT_FULL_BURN_SALVAGE=1 keeps the old full-clip salvage path selectable."""
+    monkeypatch.setenv("VW_COLLECT_FULL_BURN_SALVAGE", "1")
+    assert (os.environ.get("VW_COLLECT_FULL_BURN_SALVAGE") or "").strip().lower() in ("1", "true", "yes", "on")
+    monkeypatch.delenv("VW_COLLECT_FULL_BURN_SALVAGE", raising=False)
+    assert (os.environ.get("VW_COLLECT_FULL_BURN_SALVAGE") or "").strip().lower() not in ("1", "true", "yes", "on")
+
+
+def test_normalize_used_windows_pads_and_caps():
+    from workflow.unattended.burn_repair import normalize_used_windows
+    rows = normalize_used_windows(
+        [{"source_in_s": 2.0, "duration_s": 0.4, "path": "a.mp4"}],
+        pad_s=0.1, min_s=1.0, max_s=8.0, clip_duration=20.0,
+    )
+    assert len(rows) == 1
+    assert rows[0]["duration_s"] >= 1.0
+    assert rows[0]["duration_s"] <= 8.0
+    long_rows = normalize_used_windows(
+        [{"source_in_s": 1.0, "duration_s": 20.0}],
+        pad_s=0.0, min_s=1.0, max_s=8.0, clip_duration=30.0,
+    )
+    assert long_rows[0]["duration_s"] == 8.0
+
+
+def test_repair_used_segments_lama_only_default_and_skips_clean(tmp_path, monkeypatch):
+    """Used-segment path defaults to lama-only engines; clean clips are skipped."""
+    from workflow.unattended.burn_repair import SEGMENT_SALVAGE_ENGINES, repair_used_segments
+    assert SEGMENT_SALVAGE_ENGINES == ("lama",)
+    assert "boxblur" not in SEGMENT_SALVAGE_ENGINES
+    assert "delogo" not in SEGMENT_SALVAGE_ENGINES
+
+    clean = {
+        "clip_id": "clean1", "path": str(tmp_path / "clean.mp4"),
+        "duration": 10.0, "width": 576, "height": 1024,
+        "screening": {"accepted": True},
+    }
+    (tmp_path / "clean.mp4").write_bytes(b"not-a-real-video")
+    out = repair_used_segments(
+        [{"clip_id": "clean1", "path": clean["path"], "source_in_s": 1.0, "duration_s": 2.0}],
+        [clean],
+        workdir=tmp_path / "seg",
+        ffmpeg="ffmpeg",
+    )
+    assert out.get("skipped") is True
+    assert out["replacements"] == []
+
+
+def test_repair_used_segments_calls_lama_with_window(tmp_path, monkeypatch):
+    from workflow.unattended import burn_repair as br
+
+    src = tmp_path / "burn.mp4"
+    src.write_bytes(b"fake")
+    repaired = tmp_path / "repaired.mp4"
+    repaired.write_bytes(b"ok")
+    calls = []
+
+    def fake_lama(source, spec_path, output_root, *, model=None, start=0.0, duration=None, device="auto"):
+        calls.append({"source": Path(source), "start": start, "duration": duration})
+        return {"ok": True, "engine": "lama", "output": str(repaired)}
+
+    monkeypatch.setattr(br, "lama_repair_burn", fake_lama)
+    monkeypatch.setattr(br, "resolve_lama_model", lambda model=None: tmp_path / "big-lama.pt")
+    monkeypatch.setattr(
+        br, "repair_hint_from_decision",
+        lambda *a, **k: {"mask_spec": {"dimensions": [576, 1024], "regions": [], "preferred_engine": "lama"}, "regions": ["bottom"]},
+    )
+    monkeypatch.setattr(br, "write_mask_spec", lambda spec, path: Path(path))
+
+    clip = {
+        "clip_id": "b1",
+        "path": str(src),
+        "duration": 48.0,
+        "width": 576,
+        "height": 1024,
+        "screening": {
+            "deferred_burn_salvage": True,
+            "needs_segment_lama": True,
+            "repair_hint": {"mask_spec": {"dimensions": [576, 1024], "regions": []}},
+            "frames": [],
+        },
+    }
+    out = br.repair_used_segments(
+        [{"clip_id": "b1", "path": str(src), "source_in_s": 10.0, "duration_s": 2.0, "index": 0}],
+        [clip],
+        workdir=tmp_path / "seg",
+        ffmpeg="ffmpeg",
+        engines=("lama",),
+        pad_s=0.0,
+        min_s=1.0,
+        max_s=8.0,
+    )
+    assert out["ok"] is True
+    assert len(calls) == 1
+    assert calls[0]["start"] == 10.0
+    assert calls[0]["duration"] == 2.0
+    assert len(out["replacements"]) == 1
+    assert out["replacements"][0]["repaired_path"] == str(repaired)
+    assert out["replacements"][0]["new_source_in_s"] == 0.0
+    assert out["engines"] == ["lama"]

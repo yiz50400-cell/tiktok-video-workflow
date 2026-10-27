@@ -21,6 +21,7 @@
 1. **看素材（已过初筛）**：素材清单里每条都已通过「同款形态 / 烧录文字 / 水印 / 生活方式」视觉初筛，`usable_segments` 是**唯一允许使用**的源片段（秒）。可用 view_image 查看 `screen_grid`（4×3 宫格，按行从左到右对应 `screen_times`）确认画面。
    - 每个镜头的 `[sourceIn, sourceIn+时长]` 必须**完整落在某个 usable_segment 内**；片段外的画面一律不用（那些位置有烧录字幕、水印、看不到商品或是纯生活方式镜头）。
    - **开头第 1 个镜头和最后的 CTA 镜头**必须来自 `product_prominent: true` 的片段（`prominent_times` 附近），商品清楚、是画面主体；不许用人物/风景等生活方式镜头收尾。
+   - `needs_segment_lama` / `deferred_burn_salvage`: true 的素材仍可按 usable_segments 上时间线，但**导出前必须跑步骤 7.5** 仅对用到的窗口做 LaMa；未修就导出 = AC-8 失败。
    - 片段带 `"crop": "bottom"` / `"crop": "top"` 表示该片段原片有烧录文字，**必须裁掉**才能用：该镜头 item 不要写 `fit`，改用放大 1.35 倍的手动位置把文字推出画布——crop=bottom：`"left": -189, "top": 0, "width": 1458, "height": 2592`；crop=top：`"left": -189, "top": -672, "width": 1458, "height": 2592`（其余字段照常，`muted: true`）。`"crop": null` 的片段照常用 `fit: "cover"`。导出后会逐镜头自动复核，残留原片文字会被判不合格并要求重剪。
    - 可用片段较短时，用更短的镜头（≥1.0 秒）或在同一片段内取不同起点，不要越界。
 2. **分镜（每条成片各自一份）**：8–10 个镜头，每个 1.0–2.5 秒（30–75 帧 @30fps），总时长 15–22 秒；**本条**至少用到自己 bundle 内 2 个不同 `clip_id`，且不要整条时间线只在两段源之间乒乓。结构：钩子（痛点/惊艳结果）→ 商品出场 → 2–4 个功能/效果演示 → 便利性/卖点 → 结尾 CTA。
@@ -34,6 +35,16 @@
    - `push_asset({"filePath": "{{work_dir}}/captions.jsx", "type": "motion-graphic", "width": 1080, "height": 1920, "duration": <总帧数/30 秒换算成整数微秒>, "name": "captions"})`；若校验失败按返回诊断修改 jsx 后重新 push。
    - 在 V2 上 adds 一个 motion-graphic item：`startFrame 0`、`durationFrames = 总帧数`、`left 0, top 0, width 1080, height 1920`。
 7. **核对**：`read_project({})` 确认 V1 镜头连续、MG 覆盖全片、**没有任何 audio 轨/item**；`preview_timeline` 抽看 2–3 个时间点画面与字幕。有问题就修。
+7.5. **仅用段 LaMa（有 `needs_segment_lama` / `deferred_burn_salvage` 的素材必须做；否则跳过）**：
+   - 采集阶段默认**不**整段修烧录字（避免 8G CPU 卡死）。成片仍须满足 AC-8：最终画面无源烧录字。
+   - 从当前 V1（或即将写入结果的 `shots` / `footage_used`）整理用到的窗口，用 shell 写 `{{work_dir}}/used_shots.json`：
+     `{"shots":[{"clip_id":"...","path":"<源 path>","source_in_s":3.4,"duration_s":2.0,"index":0}, ...]}`
+     每个镜头 1.0–8.0 秒（典型 3–8s）；`path`/`clip_id` 必须对应素材清单。
+   - 跑（只要有 deferred 素材）：
+     `python -m workflow.unattended.burn_repair --used-segments {{work_dir}}/used_shots.json --clips {{segment_lama_clips_path}} --workdir {{segment_lama_workdir}} --ffmpeg {{ffmpeg}}`
+   - 读 stdout JSON 的 `replacements[]`：对每条 `push_asset({"filePath": repaired_path, "type":"video"})`，再用 `edit_item` **updates** 把对应 V1 镜头换成新 `assetId`，并设 `sourceIn: 0`（整数微秒）、`durationFrames` 保持原镜头时长。
+   - **禁止**为求快改用 boxblur / delogo / 灰色糊条；LaMa 失败就修参数重试或换其它可用 KEEP 镜头，不要降级糊字。
+   - 再 `preview_timeline` 抽查：源烧录字应消失；MG 字幕保留。
 8. **导出**：对每条成片 `export` 到 `export_paths_json` 中对应路径（count=1 时即 `{{export_path}}`）→ `track_progress` wait。
 9. **写结果**：用 shell 写 UTF-8 JSON 到 `{{result_path}}`。
    - count=1 时保持旧格式：
