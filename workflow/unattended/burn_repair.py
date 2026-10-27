@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timezone
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
@@ -43,6 +44,7 @@ DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
 DEFAULT_SALVAGE_ENGINES = ("lama", "boxblur", "delogo")
 # Used-segment path: LaMa only. Never default to boxblur/delogo for on-timeline windows.
 SEGMENT_SALVAGE_ENGINES = ("lama",)
+SEGMENT_LAMA_RESULT_FILENAME = "segment_lama_result.json"
 # Fallback only, when LaMa weights are missing. No hue=s=0 (that painted gray bars).
 FALLBACK_BLUR_RADIUS = 10
 FALLBACK_BLUR_POWER = 2
@@ -826,7 +828,212 @@ def clip_needs_segment_lama(clip: dict[str, Any] | None) -> bool:
     return False
 
 
+def segment_lama_result_path(workdir: Path | None) -> Path | None:
+    if not workdir:
+        return None
+    return Path(workdir) / SEGMENT_LAMA_RESULT_FILENAME
+
+
+def write_segment_lama_result(workdir: Path, result: dict[str, Any]) -> Path:
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    path = segment_lama_result_path(workdir)
+    assert path is not None
+    payload = {**result, "written_at": datetime.now(timezone.utc).isoformat()}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def load_segment_lama_result(workdir: Path | None) -> dict[str, Any] | None:
+    path = segment_lama_result_path(workdir)
+    if not path or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _resolve_media_path(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(Path(text).expanduser().resolve())
+    except OSError:
+        return text
+
+
+def iter_produce_used_rows(produce_result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Flatten footage_used / shots rows from a produce-result JSON."""
+    if not isinstance(produce_result, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    top = produce_result.get("footage_used")
+    if isinstance(top, list):
+        rows.extend(r for r in top if isinstance(r, dict))
+    shots = produce_result.get("shots")
+    if isinstance(shots, list):
+        for shot in shots:
+            if isinstance(shot, dict):
+                rows.append(shot)
+    for video in produce_result.get("videos") or []:
+        if not isinstance(video, dict):
+            continue
+        for key in ("footage_used", "shots"):
+            for row in video.get(key) or []:
+                if isinstance(row, dict):
+                    rows.append(row)
+    return rows
+
+
+def deferred_materials_used_on_timeline(
+    clips: list[dict[str, Any]],
+    used_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """KEEP clips that need segment LaMa and appear in produce footage_used/shots."""
+    deferred = [c for c in clips if clip_needs_segment_lama(c)]
+    if not deferred or not used_rows:
+        return []
+    used_ids = {str(r.get("clip_id") or "").strip() for r in used_rows if r.get("clip_id")}
+    used_paths = {_resolve_media_path(r.get("path")) for r in used_rows if r.get("path")}
+    used_paths.discard("")
+    hit: list[dict[str, Any]] = []
+    for clip in deferred:
+        cid = str(clip.get("clip_id") or "").strip()
+        path = _resolve_media_path(clip.get("path"))
+        if (cid and cid in used_ids) or (path and path in used_paths):
+            hit.append(clip)
+            continue
+        # footage_used may already point at a repaired segment filename under segment_lama/
+        stem = Path(path).stem if path else ""
+        for up in used_paths:
+            name = Path(up).name
+            if stem and stem in name:
+                hit.append(clip)
+                break
+    # de-dupe by clip_id/path
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for clip in hit:
+        key = str(clip.get("clip_id") or "") or _resolve_media_path(clip.get("path"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clip)
+    return out
+
+
+def assert_used_segment_lama_gate(
+    *,
+    clips: list[dict[str, Any]],
+    produce_result: dict[str, Any] | None,
+    segment_lama_workdir: Path | None,
+) -> tuple[bool, str, dict[str, Any]]:
+    """Hard AC-8 gate: deferred-burn footage on the timeline requires successful used-segment LaMa.
+
+    Prompt step 7.5 is not enough — without a successful ``segment_lama_result.json``
+    covering those materials, produce must fail (cannot mark produced).
+    """
+    used_rows = iter_produce_used_rows(produce_result)
+    needed = deferred_materials_used_on_timeline(clips, used_rows)
+    details: dict[str, Any] = {
+        "needed_clip_ids": [str(c.get("clip_id") or "") for c in needed],
+        "used_row_count": len(used_rows),
+        "segment_lama_workdir": str(segment_lama_workdir) if segment_lama_workdir else None,
+    }
+    if not needed:
+        details["required"] = False
+        return True, "无 needs_segment_lama 素材上时间线，跳过用段 LaMa 门", details
+
+    details["required"] = True
+    artifact = load_segment_lama_result(segment_lama_workdir)
+    details["artifact"] = artifact
+    if not artifact:
+        return (
+            False,
+            (
+                "使用了 needs_segment_lama / deferred_burn_salvage 烧录素材，但未找到 "
+                f"{SEGMENT_LAMA_RESULT_FILENAME}（用段 LaMa 未跑或未成功落盘），"
+                "拒绝标记 produced（AC-8：源烧录字仍可能在成片里）"
+            ),
+            details,
+        )
+    if artifact.get("skipped") and needed:
+        return (
+            False,
+            (
+                "用段 LaMa 结果为 skipped，但时间线上仍有 deferred 烧录素材："
+                + ",".join(details["needed_clip_ids"])
+                + "；拒绝 produced（AC-8）"
+            ),
+            details,
+        )
+    if not artifact.get("ok"):
+        errors = artifact.get("errors") or artifact.get("error") or artifact.get("reason") or "unknown"
+        return (
+            False,
+            f"用段 LaMa 未成功（ok!=true：{errors}），拒绝标记 produced（AC-8）",
+            details,
+        )
+
+    replacements = [r for r in (artifact.get("replacements") or []) if isinstance(r, dict)]
+    if not replacements:
+        return (
+            False,
+            (
+                "用段 LaMa 结果无 replacements，无法证明烧录窗口已修："
+                + ",".join(details["needed_clip_ids"])
+                + "；拒绝 produced（AC-8）"
+            ),
+            details,
+        )
+
+    covered_ids = {str(r.get("clip_id") or "").strip() for r in replacements if r.get("clip_id")}
+    covered_sources = {_resolve_media_path(r.get("source_path")) for r in replacements}
+    covered_sources.discard("")
+    repaired_paths = {_resolve_media_path(r.get("repaired_path")) for r in replacements}
+    repaired_paths.discard("")
+    used_paths = {_resolve_media_path(r.get("path")) for r in used_rows if r.get("path")}
+    used_paths.discard("")
+
+    missing: list[str] = []
+    for clip in needed:
+        cid = str(clip.get("clip_id") or "").strip()
+        path = _resolve_media_path(clip.get("path"))
+        # Replacement row for this KEEP is enough (footage_used may still list the original path).
+        covered = (cid and cid in covered_ids) or (path and path in covered_sources)
+        if not covered:
+            # Or produce-result already points at a repaired output for this source.
+            for r in replacements:
+                rp = _resolve_media_path(r.get("repaired_path"))
+                same = (cid and str(r.get("clip_id") or "").strip() == cid) or (
+                    path and _resolve_media_path(r.get("source_path")) == path
+                )
+                if same and rp and rp in used_paths:
+                    covered = True
+                    break
+        if not covered:
+            missing.append(cid or path or "?")
+
+    details["replacements"] = len(replacements)
+    details["missing_clip_ids"] = missing
+    if missing:
+        return (
+            False,
+            (
+                "needs_segment_lama 素材已上时间线，但 segment_lama_result 未覆盖："
+                + ",".join(missing)
+                + "；拒绝标记 produced（AC-8）"
+            ),
+            details,
+        )
+    return True, f"用段 LaMa 门通过（覆盖 {len(needed)} 个 deferred 素材）", details
+
+
 def normalize_used_windows(
+
     shots: list[dict[str, Any]],
     *,
     pad_s: float = 0.1,
@@ -950,13 +1157,17 @@ def repair_used_segments(
         })
 
     if not pending:
-        return {
+        payload = {
             "ok": True,
             "skipped": True,
             "reason": "no deferred-burn windows on timeline",
             "replacements": [],
             "errors": [],
+            "engines": list(engines),
+            "workdir": str(workdir),
         }
+        write_segment_lama_result(workdir, payload)
+        return payload
 
     repaired_by_key: dict[tuple[str, float, float], str] = {}
     errors: list[str] = []
@@ -1081,7 +1292,7 @@ def repair_used_segments(
         if item["run"] and item["dedupe_key"] not in repaired_by_key
     ]
     ok = len(missing_runs) == 0 and (bool(replacements) or not pending)
-    return {
+    payload = {
         "ok": ok,
         "skipped": False,
         "replacements": replacements,
@@ -1089,6 +1300,8 @@ def repair_used_segments(
         "engines": list(engines),
         "workdir": str(workdir),
     }
+    write_segment_lama_result(workdir, payload)
+    return payload
 
 
 def mask_from_plan(plan: dict[str, Any], width: int, height: int) -> dict[str, Any]:
@@ -1175,12 +1388,15 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 model = resolve_lama_model(args.model)
             except FileNotFoundError as exc:
-                print(json.dumps({"ok": False, "engine": "lama", "error": str(exc)}, ensure_ascii=False))
+                fail = {"ok": False, "engine": "lama", "error": str(exc), "replacements": [], "errors": [str(exc)]}
+                write_segment_lama_result(args.workdir, fail)
+                print(json.dumps(fail, ensure_ascii=False))
                 return 1
         result = repair_used_segments(
             shots, clips,
             workdir=args.workdir, ffmpeg=args.ffmpeg, lama_model=model, engines=engines,
         )
+        # repair_used_segments already persists segment_lama_result.json (AC-8 produce gate).
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0 if result.get("ok") else 1
 

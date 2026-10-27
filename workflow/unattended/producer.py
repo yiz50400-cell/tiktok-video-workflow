@@ -700,6 +700,8 @@ class Producer:
                 "segment_lama_clips_path": str(task_dir / "work" / "clips_for_segment_lama.json"),
                 "segment_lama_workdir": str(task_dir / "work" / "segment_lama"),
             }
+            self._segment_lama_workdir = Path(extra["segment_lama_workdir"])
+            self._segment_lama_clips = list(clips)
             self._product_definition = extra["product_definition"]
             self._cta = extra["cta_example"]
             (task_dir / "work").mkdir(parents=True, exist_ok=True)
@@ -921,6 +923,36 @@ class Producer:
             (logs_dir / f"codex-prompt-r{attempt}.md").write_text(attempt_prompt, encoding="utf-8")
 
         if completed.returncode == 0 and export_paths:
+            # AC-8 hard gate: deferred burn on timeline requires successful used-segment LaMa
+            # (prompt 7.5 alone is not enough — must have segment_lama_result.json coverage).
+            from .burn_repair import assert_used_segment_lama_gate
+            produce_payload = None
+            if result_path.is_file():
+                try:
+                    produce_payload = json.loads(result_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    produce_payload = None
+            gate_ok, gate_reason, gate_details = assert_used_segment_lama_gate(
+                clips=list(getattr(self, "_segment_lama_clips", None) or clips),
+                produce_result=produce_payload if isinstance(produce_payload, dict) else None,
+                segment_lama_workdir=getattr(self, "_segment_lama_workdir", None)
+                or (task_dir / "work" / "segment_lama"),
+            )
+            stages["segment_lama_gate"] = {"ok": gate_ok, "reason": gate_reason, "details": gate_details}
+            (logs_dir / "segment_lama_gate.json").write_text(
+                json.dumps(stages["segment_lama_gate"], ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            if not gate_ok:
+                return self._fail(
+                    task_id,
+                    workflow_job_id,
+                    gate_reason,
+                    delivery_paths=[],
+                    audit_path=audit_path,
+                    codex_returncode=completed.returncode,
+                )
+
             delivered = self._copy_to_delivery(export_paths, delivery_dir)
             qualified = qualifying_delivery_videos(delivery_dir)
             if not qualified:
