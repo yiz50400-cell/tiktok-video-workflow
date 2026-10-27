@@ -343,14 +343,18 @@ def default_codex_runner(
         )
         raise
     (log_path.parent / "codex-events.jsonl").write_text(_redact_secrets(completed.stdout or ""), encoding="utf-8")
+    # ok means delivery-complete, not raw process exit. Rewritten True only after
+    # qualifying files land in delivery/ (see Producer._mark_produce_log_delivery_ok).
     payload = {
-        "ok": completed.returncode == 0,
+        "ok": False,
+        "process_exit_ok": completed.returncode == 0,
         "returncode": completed.returncode,
         "command": command,
         "model": model,
         "duration_seconds": round(time.time() - started, 3),
         "stdout_tail": _as_text(completed.stdout, 12000),
         "stderr_tail": _as_text(completed.stderr, 12000),
+        "note": "ok=true only after qualifying delivery; process_exit_ok is raw codex exit",
     }
     log_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return completed
@@ -470,6 +474,7 @@ class Producer:
         extra: dict[str, str] | None = None
         self._batch_count = 1
         self._batch_allowed_ids: list[set[str]] = []
+        self._export_paths_planned: list[Path] = []
         template_path = None if production else CANARY_PROMPT_TEMPLATE
 
         # P0-1: if delivery already has a qualifying mp4, treat as success — never re-cut.
@@ -630,6 +635,7 @@ class Producer:
                 str(exports_dir / f"{market}-{task_id}-chatcut-{i + 1}.mp4")
                 for i in range(batch_n)
             ] if batch_n > 1 else [str(exports_dir / f"{market}-{task_id}-chatcut.mp4")]
+            self._export_paths_planned = [Path(p) for p in export_paths_planned]
             export_path = export_paths_planned[0]
             assignments = []
             for i, bundle in enumerate(partition.bundles):
@@ -750,11 +756,12 @@ class Producer:
                 stages["produce_mcp_retry" + suffix] = {"seconds": round(time.time() - t1, 1), "returncode": completed.returncode}
 
             export_paths = self._collect_exports(exports_dir, result_path)
-            # Empty export / missing result: fail fast. Retrying ChatCut with the same
-            # thin pool just burns attempts and still leaves delivery at 0/N.
+            # Empty export / missing or non-ok result: fail fast. Codex exit 0 after a
+            # rough-cut-only bail must not look like success (delivery stays empty).
             if production and completed is not None and completed.returncode == 0:
                 missing_result = not result_path.is_file()
-                if missing_result or not export_paths:
+                result_ok, result_err = self._read_result_ok(result_path)
+                if missing_result or not result_ok or not export_paths:
                     partial_note = getattr(self, "_batch_partial_note", "") or ""
                     requested_n = int(getattr(self, "_batch_requested_count", 0) or 0)
                     planned = int(getattr(self, "_batch_count", 0) or 0)
@@ -763,13 +770,19 @@ class Producer:
                         if planned and requested_n and planned < requested_n
                         else (f"{partial_note}，" if partial_note else "")
                     )
-                    detail = "结果文件缺失" if missing_result else f"exports=0（目录 {exports_dir} 无成片）"
+                    if missing_result:
+                        detail = "结果文件缺失"
+                    elif not result_ok:
+                        detail = f"结果 ok!=true（{result_err or 'ok missing/false'}）"
+                    else:
+                        detail = f"exports=0（无 planned/result 路径上的成片；delivery 将为空）"
                     return self._fail(
                         task_id,
                         workflow_job_id,
                         (
-                            f"{plan_bit}制作未生成成片文件（{detail}），交付检查失败；"
-                            "停止空转重试。请确认 ChatCut 已开、MCP 可用后重投；"
+                            f"{plan_bit}制作未生成成片文件（{detail}），delivery 为空，拒绝假成功；"
+                            f"codex exit={completed.returncode}。"
+                            "停止空转重试。请确认 ChatCut 已开、MCP 可用并完成 export 后重投；"
                             "若仍只有极少素材，先改善 TikTok 出口/限流再采。"
                         ),
                         delivery_paths=[],
@@ -874,6 +887,22 @@ class Producer:
 
         if completed.returncode == 0 and export_paths:
             delivered = self._copy_to_delivery(export_paths, delivery_dir)
+            qualified = qualifying_delivery_videos(delivery_dir)
+            if not qualified:
+                return self._fail(
+                    task_id,
+                    workflow_job_id,
+                    (
+                        f"delivery 为空或成片过小（<{MIN_DELIVERY_BYTES}B），拒绝标记 produced（防假成功）；"
+                        f"codex exit={completed.returncode}，exports={len(export_paths)}，"
+                        f"copied={len(delivered)}。"
+                    ),
+                    delivery_paths=[],
+                    audit_path=audit_path,
+                    codex_returncode=completed.returncode,
+                )
+            delivered = [str(p) for p in qualified]
+            self._mark_produce_log_delivery_ok(log_path, delivered)
             partial_note = getattr(self, "_batch_partial_note", "") or ""
             requested_n = int(getattr(self, "_batch_requested_count", 0) or 0)
             if partial_note or (requested_n and len(delivered) < requested_n):
@@ -1186,8 +1215,58 @@ class Producer:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return path
 
+    @staticmethod
+    def _read_result_ok(result_path: Path) -> tuple[bool, str]:
+        """Return (ok_true, error_detail) from produce-result.json."""
+        if not result_path.is_file():
+            return False, "结果文件缺失"
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return False, f"结果不是 JSON：{exc}"
+        if not isinstance(payload, dict):
+            return False, "结果根节点不是对象"
+        if payload.get("ok") is True:
+            return True, ""
+        return False, str(payload.get("error") or "ok!=true")
+
+    @staticmethod
+    def _mark_produce_log_delivery_ok(log_path: Path, delivery_paths: list[str]) -> None:
+        """Rewrite produce-stage log so ok reflects delivery-complete, not raw exit."""
+        if not log_path.is_file():
+            return
+        try:
+            payload = json.loads(log_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict):
+            return
+        payload["ok"] = True
+        payload["delivery_paths"] = list(delivery_paths)
+        payload["note"] = "ok=true：qualifying delivery 已落盘"
+        log_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def _collect_exports(self, exports_dir: Path, result_path: Path) -> list[Path]:
+        """Collect export mp4s from result.export_paths and/or planned paths only.
+
+        Blind exports_dir.rglob is removed: leftover orphans must not become a
+        false success when Codex rough-cuts and exits 0 without a real export.
+        """
         found: list[Path] = []
+        seen: set[str] = set()
+
+        def _add(path: Path) -> None:
+            if not path.is_file() or path.suffix.lower() not in VIDEO_SUFFIXES:
+                return
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            if key in seen:
+                return
+            seen.add(key)
+            found.append(path)
+
         if result_path.is_file():
             try:
                 payload = json.loads(result_path.read_text(encoding="utf-8"))
@@ -1195,15 +1274,19 @@ class Producer:
                 payload = {}
             if isinstance(payload, dict):
                 for item in payload.get("export_paths") or []:
-                    path = Path(str(item))
-                    if path.is_file():
-                        found.append(path)
-        if not found:
-            found = sorted(
-                path
-                for path in exports_dir.rglob("*")
-                if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
-            )
+                    _add(Path(str(item)))
+
+        planned = list(getattr(self, "_export_paths_planned", None) or [])
+        for path in planned:
+            _add(Path(path))
+
+        # Severely restricted fallback: only planned basenames directly under exports_dir
+        # (no recursive orphan harvest).
+        if not found and planned and exports_dir.is_dir():
+            names = {Path(p).name for p in planned}
+            for path in sorted(exports_dir.iterdir()):
+                if path.name in names:
+                    _add(path)
         return found
 
     def _copy_to_delivery(self, export_paths: list[Path], delivery_dir: Path) -> list[str]:
