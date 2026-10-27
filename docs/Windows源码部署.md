@@ -1,6 +1,6 @@
 # Windows 源码部署（当前交付方式）
 
-更新：2026-10-21（Asia/Shanghai）。本页是 Windows 客户的唯一部署说明。交付方式为 **GitHub 源码下载 + 客户现有 Codex 作为工作台**，不提供安装包、Electron 桌面端或常驻网页。旧的桌面安装包说明见 [Windows桌面交付-2026-10-14](Windows桌面交付-2026-10-14.md)（历史归档）。
+更新：2026-10-27（Asia/Shanghai）。本页是 Windows 客户的唯一部署说明。交付方式为 **GitHub 源码下载 + 客户现有 Codex 作为工作台**，不提供安装包、Electron 桌面端或常驻网页。旧的桌面安装包说明见 [Windows桌面交付-2026-10-14](Windows桌面交付-2026-10-14.md)（历史归档）。
 
 范围：到本机成片、独立字幕、中文说明和本机交付包结束。第07步发布（紫鸟、TikTok Studio、上传、草稿、挂商品、发布）不在范围内，由员工手动完成。
 
@@ -22,11 +22,17 @@
 
 ## 1.1 保量采集：Docker + Evil0ctal（优先）
 
-要稳定加厚候选素材池，客户机**优先**按 [Docker与Evil0ctal自装](Docker与Evil0ctal自装.md) 安装 Docker Desktop（内存建议 ≥ 8 GB）+ Evil0ctal（`--profile browser`），并把 API key 配到 `VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE`。
+要稳定加厚候选素材池，客户机**优先**按 [Docker与Evil0ctal自装](Docker与Evil0ctal自装.md) 安装 Docker + Evil0ctal（`--profile browser`），并把 API key 配到 `VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE`（可选 `VW_EVIL_API_BASE=http://127.0.0.1:8000`）。装好后确认 `http://127.0.0.1:8000/readyz` 为 ok。
 
-- **就绪**：采集日志应出现「采集-Evil 就绪」，候选 URL 明显厚于纯 web search。
+| 路径 | 何时用 |
+| --- | --- |
+| **Docker Desktop**（推荐） | Win10/11 较新、安装器接受、能开虚拟化；内存建议给 Docker ≥ 8 GB。见自装文档 §2 |
+| **WSL2 Ubuntu + Docker Engine**（旁路） | Win10 **旧版（如 21H1）** 装不上 Desktop、系统升级失败（`0x80073701` / `0x80070057`）时：**不必强升系统**，BIOS 开虚拟化后按自装文档 **§2.1** 在 Ubuntu 里装 Engine + Compose 跑同一套 Evil |
+
+- **就绪**：采集日志应出现「采集-Evil 就绪」，候选 URL 明显厚于纯 web search；`docker compose … ps` 里 api/worker/postgres/redis/browser-rpc 共 5 个 healthy。
 - **未装 / 探针失败**：自动降级 Codex web search → yt-dlp，**不要**因此卡死；仍可出片，只是候选池更薄。
 - Evil **只搜 URL**，下载仍用本仓 yt-dlp；不要拷贝他人的 `auth.json` / API key。
+- **8 GB 内存 + LaMa CPU**：Evil 可 healthy，LaMa salvage 会慢——属硬件限制，见自装文档 §2.1.6。
 
 ## 2. 安装依赖
 

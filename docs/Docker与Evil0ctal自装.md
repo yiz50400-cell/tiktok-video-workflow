@@ -1,6 +1,6 @@
 # Docker + Evil0ctal 客户自装（保量默认发现）
 
-更新：2026-10-26（Asia/Shanghai）。
+更新：2026-10-27（Asia/Shanghai）。
 
 ## 这是什么
 
@@ -20,17 +20,19 @@
 
 | 要求 | 说明 |
 | --- | --- |
-| 系统 | macOS、Windows 10/11（Docker Desktop + WSL2）或 Linux |
-| Docker | [Docker Desktop](https://www.docker.com/products/docker-desktop/)（含 Compose v2.24+）。终端执行 `docker compose version` 能输出版本 |
+| 系统 | macOS、Windows 10/11 或 Linux。**优先 Docker Desktop**；Win10 旧版（如 21H1）装不上 Desktop / 系统升不了时，用 **WSL2 Ubuntu + Docker Engine**（见 §2.1） |
+| Docker | 二选一均可：① [Docker Desktop](https://www.docker.com/products/docker-desktop/)（含 Compose v2.24+）；② 仅 WSL2 内 [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) + Compose 插件。终端执行 `docker compose version` 能输出版本 |
 | Git / openssl | 克隆 Evil 仓库；生成 `.env` 密钥 |
 | 内存 | **核心栈约 4 GB**；加 **browser 配置档建议 Docker 分到 ≥ 8 GB**（browser-rpc 热态可到约 2.5 GB+） |
 | 磁盘 | 建议空闲 **≥ 15 GB**（镜像约 6 GB+，另加构建缓存与数据卷） |
 | 网络 | 能拉 Docker Hub；TikTok 需可访问（可走本机 Clash/系统代理，见 §7） |
 | 本工作流 | 已按 [Windows源码部署](Windows源码部署.md) 装好 Python/uv/yt-dlp（或至少装了 `requirements-collect.txt`） |
 
-## 2. 安装并启动 Docker Desktop
+## 2. 安装并启动 Docker Desktop（优先）
 
-1. 安装 Docker Desktop（Apple Silicon 选 Mac Arm；Windows 选对应安装包并启用 WSL2）。
+能装 Desktop 时走本节；**Win10 旧版 / Desktop 装不上**见 **§2.1**（WSL2 + Docker Engine，无 GUI，同样可跑 Evil）。
+
+1. 安装 Docker Desktop（Apple Silicon 选 Mac Arm；Windows 选对应安装包并启用 WSL2；系统过旧时 Docker 安装器会直接拒绝，改走 §2.1）。
 2. 打开 Docker Desktop，等到状态为 **Running**（引擎就绪）。
 3. **Settings → Resources**：内存建议分给 Docker **≥ 8 GB**（否则 browser-rpc 易 OOM / unhealthy）。
 4. 终端确认：
@@ -41,6 +43,81 @@ docker compose version
 ```
 
 若提示找不到 `docker` 或 daemon 未起：先打开 Docker Desktop，再重开终端。
+
+
+## 2.1 旁路：Win10 旧版装不了 Docker Desktop → WSL2 + Docker Engine
+
+客户机实测路径（Win10 **21H1**、BIOS 已开虚拟化、Docker Desktop 不支持 / Windows 升级失败如 `0x80073701` / `0x80070057` 时）：**不必强升系统**，用 **WSL2 + Ubuntu + Docker Engine（无 Desktop GUI）** 跑 Evil，保量同样成立。能装 Desktop 时仍优先 §2。
+
+### 2.1.1 开虚拟化
+
+1. 进 BIOS/UEFI 打开 **Intel VT-x** 或 **AMD-V / SVM**，保存重启。
+2. Windows 功能里勾选 **适用于 Linux 的 Windows 子系统**、**虚拟机平台**（需管理员）；重启。
+
+### 2.1.2 装 WSL2 + Ubuntu
+
+管理员 PowerShell：
+
+```powershell
+wsl --install -d Ubuntu-24.04
+# 若已装过 WSL1：wsl --set-default-version 2
+wsl -l -v
+# 期望 VERSION 为 2
+```
+
+首次进 Ubuntu 设用户名/密码。后续 **所有 Docker / Evil 命令都在 Ubuntu 终端里跑**（Windows 侧不必再装 Desktop）。
+
+### 2.1.3 在 Ubuntu 里装 Docker Engine + Compose
+
+按官方 Ubuntu 安装文档装 Engine（不要装 Desktop）。示意：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker "$USER"
+# 重新登录 Ubuntu 会话后再用 docker（或 newgrp docker）
+docker info
+docker compose version
+```
+
+### 2.1.4 拉镜像 / 代理（常见坑）
+
+WSL2 里拉 Docker Hub 常需代理。若宿主机 Clash 不稳或 `127.0.0.1:7897` 在 WSL 里不通：
+
+- 用 **稳定代理**，或把 Windows 主机 IP 转发给 WSL（例如 `export HTTPS_PROXY=http://$(cat /etc/resolv.conf | awk '/nameserver/{print $1}'):7897`，端口以本机混合端口为准）。
+- 也可给 Docker daemon 配 `proxies`（`/etc/docker/daemon.json` / systemd drop-in），再 `sudo systemctl restart docker`。
+- **不要**把含密钥的代理配置提交进仓库。
+
+Evil 容器内代理策略仍见 §8：仅 **browser-rpc** 走代理访问 TikTok；**api/worker** 清空代理以免连不上 compose 内网。
+
+### 2.1.5 克隆 Evil、`.env`、启动与验收
+
+与 §3–§5、§11 **完全相同**（仍在 Ubuntu 里）：
+
+```bash
+mkdir -p ~/dtk-pilot && cd ~/dtk-pilot
+git clone https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git
+cd Douyin_TikTok_Download_API
+# 写 .env（同 §3）→
+docker compose -p dtk -f docker/compose.yml --profile browser up -d --build --wait --wait-timeout 600
+curl -sS http://127.0.0.1:8000/readyz
+```
+
+期望：`api` / `worker` / `postgres` / `redis` / `browser-rpc` 共 **5 个服务 healthy**；控制台建 API Key；本工作流侧仍配 `VW_EVIL_API_KEY`（或 `VW_EVIL_API_KEY_FILE`）与可选 `VW_EVIL_API_BASE=http://127.0.0.1:8000`。
+
+Windows 宿主上的 Python 无人值守访问 `127.0.0.1:8000`：WSL2 默认会把 Ubuntu 里发布的端口转到宿主机 loopback；若不通，在 `docker/compose` 确认 api 绑定 `127.0.0.1:8000:8000`，或查 `wsl hostname -I` 后用该 IP（并注意防火墙）。
+
+### 2.1.6 硬件说明（不是 Docker 坏了）
+
+客户机常见 **8 GB 内存 + LaMa 走 CPU**：Evil 栈能 healthy，但 LaMa salvage 会很慢甚至吃紧——属机器限制。可关其它占内存应用、给 WSL 限内存（`.wslconfig`），或接受 salvage 降级 boxblur；不必因此回退到「无 Evil」。
+
+Windows 总览与交叉链接见 [Windows源码部署](Windows源码部署.md) §1.1。
 
 ## 3. 克隆 Evil 并写 `.env`
 
@@ -221,7 +298,8 @@ Windows 上若 `host.docker.internal` 不可用，改用 Docker 为宿主机准�
 
 | 现象 | 处理 |
 | --- | --- |
-| `Cannot connect to the Docker daemon` / 找不到 docker | 打开 Docker Desktop，等 Running 后重开终端 |
+| `Cannot connect to the Docker daemon` / 找不到 docker | Desktop：打开 Docker Desktop 等 Running 后重开终端。无 Desktop：进 WSL2 Ubuntu，确认 `sudo service docker start` / `docker info`（见 §2.1） |
+| Win10 旧版（如 21H1）Docker Desktop 安装器拒绝 / 系统升不了 | **不要硬升**；走 §2.1 WSL2 + Docker Engine |
 | 内存不足 / `browser-rpc` 反复重启、unhealthy | Docker Desktop 内存调到 ≥ 8 GB；关掉其它占内存应用后 `compose … up -d` |
 | `refusing to start: DTK_SECRET_KEY is not set` | `.env` 必须在 Evil **仓库根**；确认已写入且 compose 从该目录启动 |
 | 无 setup 横幅 | 可能已初始化；改走 `http://127.0.0.1:8000/login` |
