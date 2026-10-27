@@ -1,17 +1,21 @@
 """Direct salvage for burned-in source subtitles/text.
 
 IZ/Yang (2026-10-26):
-  1) Burned-in text → direct salvage. Do not prefer cut/dodge and do not skip treatment.
+  1) Burned-in text → salvage with LaMa fill. Do not prefer cut/dodge and do not skip treatment.
   2) Wrong-product / blacklist stays a hard kill (never call this).
   3) ROI hugs the subtitle/text bbox only (MAX_BAND_FRAC, assert_safe_roi).
      Ban tall / full-frame / face smear (v5b cream smear).
 
-Look: fill / inpaint (LaMa) so glyphs and the subtitle bar are gone and skin
-stays natural. IZ rejected gray soft boxblur / hue-desat bars and rejected
-soft purple-frost transparent blur as the deliverable. Engine order is lama,
-then a plain boxblur only if the weights are missing, then delogo last
-because its border interpolation stretches colored chips. Neither fallback
-is the default, and the boxblur fallback does not desaturate.
+IZ/Yang (2026-10-27) used-segment LaMa:
+  Default collect path *defers* full-source salvage (48s/1400-frame CPU LaMa
+  blocks the pipeline on 8G machines). Burn-demoted clips enter KEEP unrepaired
+  with ``deferred_burn_salvage``. After ChatCut assemble, ``repair_used_segments``
+  LaMa-only the 3–8s ``sourceIn`` windows actually on the timeline, then re-push
+  before export. AC-8 still requires no source burn on the final. Boxblur/delogo
+  stay banned as the default look (opt-in full-clip salvage may still fall back).
+
+Look: fill / inpaint (LaMa). Full-clip opt-in engine order remains lama → boxblur
+→ delogo. Used-segment path is lama-only (no boxblur/delogo default).
 
 Temporal ROI plans carry intervals. LaMa paints a box only inside those
 intervals (workflow.repair.intervals). Outputs need visual review.
@@ -37,6 +41,8 @@ MAX_FACE_OVERLAP_FRAC = 0.08  # max overlap with face zone vs frame height
 DEFAULT_LAMA_MODEL = Path(".runtime/models/big-lama.pt")
 # Fill first. Boxblur and delogo are explicit degraded fallbacks, never the look.
 DEFAULT_SALVAGE_ENGINES = ("lama", "boxblur", "delogo")
+# Used-segment path: LaMa only. Never default to boxblur/delogo for on-timeline windows.
+SEGMENT_SALVAGE_ENGINES = ("lama",)
 # Fallback only, when LaMa weights are missing. No hue=s=0 (that painted gray bars).
 FALLBACK_BLUR_RADIUS = 10
 FALLBACK_BLUR_POWER = 2
@@ -754,7 +760,339 @@ def salvage_demoted_burn(
     return {**decision, "salvage_attempted": True, "salvage_errors": errors, "repair_hint": hint}
 
 
+def defer_demoted_burn(
+    decision: dict[str, Any],
+    *,
+    width: int,
+    height: int,
+    duration: float,
+    log: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Accept a burn_cut demote into KEEP without running full-source LaMa.
+
+    Stores ``repair_hint`` for later ``repair_used_segments``. Opt-in full-clip
+    salvage remains ``salvage_demoted_burn`` (VW_COLLECT_FULL_BURN_SALVAGE=1).
+    """
+    log = log or (lambda _m: None)
+    if decision.get("accepted"):
+        return decision
+    if not decision.get("demoted") or decision.get("demote_reason") != "burn_cut":
+        return decision
+
+    frames = decision.get("frames") or []
+    hint = repair_hint_from_decision(decision, width, height, duration=duration) or {
+        "mask_spec": mask_spec_from_frames(
+            frames, width, height, times=decision.get("screen_times"), duration=duration,
+        ),
+        "regions": text_regions_from_frames(frames),
+    }
+    if frames:
+        prominent = any(bool(f.get("product_prominent")) for f in frames)
+    else:
+        prominent = True
+    updated = {
+        **decision,
+        "accepted": True,
+        "demoted": False,
+        "salvaged": False,
+        "deferred_burn_salvage": True,
+        "needs_segment_lama": True,
+        "usable_segments": full_span_segments(duration, product_prominent=bool(prominent)),
+        "usable_s": round(float(duration), 2),
+        "needs_visual_review": True,
+        "reason": (
+            "烧录文字：采集阶段推迟整段 LaMa；KEEP 用原片，剪完后仅对时间线用到的 "
+            "3–8s 窗口做 LaMa（AC-8 成片仍须无源烧录字）"
+        ),
+        "repair_hint": hint,
+    }
+    log(f"burn salvage deferred (used-segment LaMa later) duration={duration:.1f}s")
+    return updated
+
+
+def clip_needs_segment_lama(clip: dict[str, Any] | None) -> bool:
+    """True when this KEEP clip still carries unrepaired burn for segment LaMa."""
+    if not clip:
+        return False
+    screening = clip.get("screening") if isinstance(clip.get("screening"), dict) else {}
+    if clip.get("deferred_burn_salvage") or clip.get("needs_segment_lama"):
+        return True
+    if screening.get("deferred_burn_salvage") or screening.get("needs_segment_lama"):
+        return True
+    if screening.get("salvaged"):
+        return False
+    if screening.get("demote_reason") == "burn_cut" and screening.get("repair_hint"):
+        return True
+    return False
+
+
+def normalize_used_windows(
+    shots: list[dict[str, Any]],
+    *,
+    pad_s: float = 0.1,
+    min_s: float = 1.0,
+    max_s: float = 8.0,
+    clip_duration: float | None = None,
+) -> list[dict[str, Any]]:
+    """Clamp / pad timeline source windows for LaMa (typical 3–8s, min 1s)."""
+    out: list[dict[str, Any]] = []
+    for index, shot in enumerate(shots):
+        try:
+            start = float(shot.get("source_in_s") if shot.get("source_in_s") is not None else shot.get("sourceIn_s") or 0.0)
+        except (TypeError, ValueError):
+            start = 0.0
+        try:
+            dur = float(shot.get("duration_s") if shot.get("duration_s") is not None else shot.get("duration") or 0.0)
+        except (TypeError, ValueError):
+            dur = 0.0
+        if dur <= 0:
+            continue
+        start = max(0.0, start - pad_s)
+        dur = dur + 2 * pad_s
+        if dur < min_s:
+            # Expand around center to give LaMa enough frames.
+            center = start + dur / 2.0
+            start = max(0.0, center - min_s / 2.0)
+            dur = min_s
+        if dur > max_s:
+            dur = max_s
+        if clip_duration is not None and clip_duration > 0:
+            if start >= clip_duration:
+                continue
+            dur = min(dur, float(clip_duration) - start)
+        if dur <= 0:
+            continue
+        row = {
+            **shot,
+            "source_in_s": round(start, 3),
+            "duration_s": round(dur, 3),
+            "window_index": index,
+        }
+        out.append(row)
+    return out
+
+
+def repair_used_segments(
+    shots: list[dict[str, Any]],
+    clips: list[dict[str, Any]],
+    *,
+    workdir: Path,
+    ffmpeg: str = "ffmpeg",
+    lama_model: Path | None = None,
+    engines: tuple[str, ...] = SEGMENT_SALVAGE_ENGINES,
+    pad_s: float = 0.1,
+    min_s: float = 1.0,
+    max_s: float = 8.0,
+    log: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """LaMa only the source windows used on the timeline for deferred-burn clips.
+
+    Default engines are lama-only (no boxblur/delogo). Returns replacements so
+    ChatCut can push_asset the short repaired clip and set sourceIn=0.
+    """
+    log = log or (lambda _m: None)
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    by_id: dict[str, dict[str, Any]] = {}
+    by_path: dict[str, dict[str, Any]] = {}
+    for clip in clips:
+        cid = str(clip.get("clip_id") or "")
+        if cid:
+            by_id[cid] = clip
+        path = str(clip.get("path") or "")
+        if path:
+            by_path[path] = clip
+            by_path[str(Path(path).resolve()) if Path(path).exists() else path] = clip
+
+    # Deduplicate identical windows so overlapping identical shots share one LaMa run.
+    pending: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, float, float]] = set()
+    for shot in shots:
+        path = str(shot.get("path") or "")
+        cid = str(shot.get("clip_id") or "")
+        clip = (by_id.get(cid) if cid else None) or by_path.get(path)
+        if not clip_needs_segment_lama(clip) and not clip_needs_segment_lama(shot):
+            continue
+        clip = clip or shot
+        source = Path(str(clip.get("path") or path))
+        if not source.is_file():
+            continue
+        clip_dur = float(clip.get("duration") or 0.0) or None
+        windows = normalize_used_windows(
+            [shot], pad_s=pad_s, min_s=min_s, max_s=max_s, clip_duration=clip_dur,
+        )
+        if not windows:
+            continue
+        win = windows[0]
+        key = (str(source), float(win["source_in_s"]), float(win["duration_s"]))
+        if key in seen_keys:
+            # Still emit a replacement row pointing at the same key (filled later).
+            pending.append({
+                "shot": shot,
+                "clip": clip,
+                "source": source,
+                "source_in_s": key[1],
+                "duration_s": key[2],
+                "dedupe_key": key,
+                "run": False,
+            })
+            continue
+        seen_keys.add(key)
+        pending.append({
+            "shot": shot,
+            "clip": clip,
+            "source": source,
+            "source_in_s": key[1],
+            "duration_s": key[2],
+            "dedupe_key": key,
+            "run": True,
+        })
+
+    if not pending:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "no deferred-burn windows on timeline",
+            "replacements": [],
+            "errors": [],
+        }
+
+    repaired_by_key: dict[tuple[str, float, float], str] = {}
+    errors: list[str] = []
+    replacements: list[dict[str, Any]] = []
+
+    for item in pending:
+        key = item["dedupe_key"]
+        shot = item["shot"]
+        clip = item["clip"]
+        source: Path = item["source"]
+        start = float(item["source_in_s"])
+        dur = float(item["duration_s"])
+        if item["run"]:
+            screening = clip.get("screening") if isinstance(clip.get("screening"), dict) else {}
+            width = int(clip.get("width") or shot.get("width") or 0)
+            height = int(clip.get("height") or shot.get("height") or 0)
+            full_dur = float(clip.get("duration") or 0.0) or (start + dur)
+            if not (width and height):
+                try:
+                    width, height, probed = _probe_video(source, ffmpeg)
+                    full_dur = full_dur or probed
+                except Exception as exc:
+                    errors.append(f"{source.name}: probe failed: {exc}")
+                    continue
+            decision = {
+                "accepted": False,
+                "demoted": True,
+                "demote_reason": "burn_cut",
+                "frames": screening.get("frames") or clip.get("frames") or [],
+                "screen_times": screening.get("screen_times") or clip.get("screen_times") or [],
+                "repair_hint": screening.get("repair_hint") or clip.get("repair_hint"),
+            }
+            hint = repair_hint_from_decision(decision, width, height, duration=full_dur) or {
+                "mask_spec": mask_spec_from_frames(
+                    decision["frames"], width, height,
+                    times=decision.get("screen_times"), duration=full_dur,
+                ),
+                "regions": text_regions_from_frames(decision["frames"]),
+            }
+            seg_dir = workdir / f"{source.stem}_{int(start * 1000)}_{int(dur * 1000)}"
+            seg_dir.mkdir(parents=True, exist_ok=True)
+            spec = hint["mask_spec"]
+            spec_path = write_mask_spec(spec, seg_dir / "burn_mask_spec.json")
+            engine_ok = False
+            last_err = ""
+            for engine in engines:
+                try:
+                    if engine != "lama":
+                        # Explicit non-default only when caller overrides engines.
+                        out = seg_dir / f"salvaged_{engine}.mp4"
+                        # Interval-shift: remove_or_blur on a trimmed copy for fallbacks.
+                        trim = seg_dir / "trim.mp4"
+                        subprocess.run(
+                            [
+                                ffmpeg, "-y", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+                                "-i", str(source), "-c", "copy", str(trim),
+                            ],
+                            check=True, capture_output=True, text=True,
+                        )
+                        # Shift region intervals into trim-local time.
+                        local_spec = json.loads(json.dumps(spec))
+                        for region in local_spec.get("regions") or []:
+                            intervals = []
+                            for pair in region.get("intervals") or []:
+                                a, b = float(pair[0]) - start, float(pair[1]) - start
+                                if b <= 0 or a >= dur:
+                                    continue
+                                intervals.append([max(0.0, a), min(dur, b)])
+                            region["intervals"] = intervals
+                            if region.get("t0") is not None:
+                                region["t0"] = max(0.0, float(region["t0"]) - start)
+                            if region.get("t1") is not None:
+                                region["t1"] = min(dur, max(0.0, float(region["t1"]) - start))
+                        result = remove_or_blur_burn(
+                            trim, local_spec, out, ffmpeg=ffmpeg, engine=engine,
+                        )
+                    else:
+                        result = lama_repair_burn(
+                            source, spec_path, seg_dir / "lama",
+                            model=lama_model, start=start, duration=dur,
+                        )
+                        if not result.get("ok") or not result.get("output"):
+                            raise RuntimeError(f"lama produced no output: {result}")
+                    salvaged = Path(result["output"])
+                    if not salvaged.is_file():
+                        raise RuntimeError("missing salvaged file")
+                    repaired_by_key[key] = str(salvaged)
+                    engine_ok = True
+                    log(
+                        f"used-segment LaMa ok {source.name} "
+                        f"[{start:.2f},{start + dur:.2f}] → {salvaged.name}"
+                    )
+                    break
+                except Exception as exc:
+                    last_err = f"{engine}: {exc}"
+                    errors.append(f"{source.name}@{start:.2f}: {last_err}")
+                    log(f"used-segment {engine} failed: {exc}")
+            if not engine_ok:
+                continue
+        repaired = repaired_by_key.get(key)
+        if not repaired:
+            continue
+        replacements.append({
+            "clip_id": str(clip.get("clip_id") or shot.get("clip_id") or ""),
+            "source_path": str(source),
+            "source_in_s": start,
+            "duration_s": dur,
+            "original_source_in_s": float(shot.get("source_in_s") or 0.0),
+            "original_duration_s": float(shot.get("duration_s") or dur),
+            "repaired_path": repaired,
+            "new_source_in_s": 0.0,
+            "engine": "lama" if "lama" in engines else engines[0],
+            "shot_index": shot.get("index"),
+        })
+
+    ok = bool(replacements) and not any(
+        item["run"] and item["dedupe_key"] not in repaired_by_key for item in pending
+    )
+    # ok if every run key was repaired (dedupe followers ok when key present)
+    missing_runs = [
+        item for item in pending
+        if item["run"] and item["dedupe_key"] not in repaired_by_key
+    ]
+    ok = len(missing_runs) == 0 and (bool(replacements) or not pending)
+    return {
+        "ok": ok,
+        "skipped": False,
+        "replacements": replacements,
+        "errors": errors,
+        "engines": list(engines),
+        "workdir": str(workdir),
+    }
+
+
 def mask_from_plan(plan: dict[str, Any], width: int, height: int) -> dict[str, Any]:
+
     """Turn a hand ROI plan into a mask spec. Each box must pass assert_safe_roi."""
     regions: list[dict[str, Any]] = []
     for index, item in enumerate(plan.get("regions") or []):
@@ -791,29 +1129,63 @@ def _probe_video(path: Path, ffmpeg: str) -> tuple[int, int, float]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Re-run burn salvage on one clip. Default engine is LaMa fill.
+    """Re-run burn salvage on one clip, or LaMa only timeline-used windows.
 
     Examples:
       python -m workflow.unattended.burn_repair --source CLIP.mp4 --plan roi_plan.json --model /path/big-lama.pt --workdir ./burn_out
       python -m workflow.unattended.burn_repair --source CLIP.mp4 --decision decision.json --model /path/big-lama.pt --workdir ./burn_out
+      python -m workflow.unattended.burn_repair --used-segments shots.json --clips clips.json --workdir ./seg_lama
     """
     import argparse
 
     parser = argparse.ArgumentParser(
         description="Salvage burned-in subtitles with LaMa fill on a temporal hug-ROI plan"
     )
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source", type=Path, help="full-clip salvage source")
     parser.add_argument("--workdir", type=Path, required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--decision", type=Path, help="screening decision JSON (demote_reason=burn_cut)")
     parser.add_argument("--plan", type=Path, help="ROI plan JSON {regions:[{box:[x,y,w,h], t0, t1}]}")
+    parser.add_argument("--used-segments", type=Path, help="JSON list/object of timeline shots (path, source_in_s, duration_s)")
+    parser.add_argument("--clips", type=Path, help="JSON list of KEEP clips with screening/repair_hint (required with --used-segments)")
     parser.add_argument("--model", type=Path, help="LaMa weights. Default: .runtime/models/big-lama.pt")
     parser.add_argument("--engine", choices=("lama", "boxblur", "delogo"), default="lama",
-                        help="lama is the look. boxblur/delogo are explicit degraded fallbacks")
+                        help="lama is the look. boxblur/delogo are explicit degraded fallbacks (full-clip only)")
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
     parser.add_argument("--duration", type=float)
     args = parser.parse_args(argv)
+
+    if args.used_segments:
+        shots_payload = json.loads(args.used_segments.read_text(encoding="utf-8"))
+        if isinstance(shots_payload, dict):
+            shots = list(shots_payload.get("shots") or shots_payload.get("footage_used") or [])
+        else:
+            shots = list(shots_payload)
+        if not args.clips:
+            raise SystemExit("--clips is required with --used-segments")
+        clips_payload = json.loads(args.clips.read_text(encoding="utf-8"))
+        if isinstance(clips_payload, dict):
+            clips = list(clips_payload.get("clips") or [])
+        else:
+            clips = list(clips_payload)
+        model = None
+        engines = SEGMENT_SALVAGE_ENGINES if args.engine == "lama" else (args.engine,)
+        if "lama" in engines:
+            try:
+                model = resolve_lama_model(args.model)
+            except FileNotFoundError as exc:
+                print(json.dumps({"ok": False, "engine": "lama", "error": str(exc)}, ensure_ascii=False))
+                return 1
+        result = repair_used_segments(
+            shots, clips,
+            workdir=args.workdir, ffmpeg=args.ffmpeg, lama_model=model, engines=engines,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0 if result.get("ok") else 1
+
+    if not args.source:
+        raise SystemExit("pass --source with --plan/--decision, or --used-segments with --clips")
     if not args.plan and not args.decision:
         raise SystemExit("pass --plan or --decision")
     model: Path | None = None

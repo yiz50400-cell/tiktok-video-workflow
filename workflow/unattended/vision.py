@@ -2,8 +2,9 @@
 
 * ``screen_clips``  — BEFORE editing: per clip, check 12 sampled frames for same product
   type / form factor, burned-in source text, watermarks and lifestyle-only frames, and derive
-  ``usable_segments`` (only these may be cut into the timeline). Burned-in text is direct
-  salvage (tight temporal LaMa fill), not cut/dodge-first; wrong-product still hard-kills.
+  ``usable_segments`` (only these may be cut into the timeline). Burned-in text is demoted
+  for salvage (not cut/dodge-first); collect defers full-clip LaMa by default and produce
+  LaMa-only used timeline windows; wrong-product still hard-kills.
 * ``check_shots``   — after editing (deterministic): every shot lies inside a usable segment,
   hook and final CTA shots come from product-prominent segments.
 * ``review_export`` — AFTER export: sample one frame per shot from the finished video and
@@ -199,9 +200,10 @@ def _stamp_frame_times(frames: list[Any], times: list[float]) -> list[Any]:
 def apply_screening(verdict: dict[str, Any] | None, times: list[float], span: float) -> dict[str, Any]:
     """Turn one clip's vision verdict into accept/reject + usable segments.
 
-    Binding (IZ/Yang 2026-10-26): burned-in source text is direct salvage
+    Binding (IZ/Yang 2026-10-26/27): burned-in source text is salvage
     (temporal LaMa fill), not cut/dodge-first. Burn-dominated clips are demoted
-    for salvage even if a few clean frames remain. Wrong-product still hard-kills.
+    even if a few clean frames remain; collect defers full-clip LaMa by default
+    (used-segment LaMa after assemble). Wrong-product still hard-kills.
     ROI safety lives in burn_repair (hug subtitle bbox; no tall/face smear).
     """
     if not isinstance(verdict, dict):

@@ -623,11 +623,50 @@ class Producer:
             (task_dir / "batch-assignments.json").write_text(
                 json.dumps(stages["batch_partition"], ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            footage_for_prompt = [
-                {k: c.get(k) for k in ("path", "source_url", "account", "title", "duration", "width", "height",
-                                       "screen_grid", "screen_times", "usable_segments", "clip_id")}
-                for c in clips
-            ]
+            def _footage_row(c: dict[str, Any]) -> dict[str, Any]:
+                screening = c.get("screening") if isinstance(c.get("screening"), dict) else {}
+                row = {k: c.get(k) for k in (
+                    "path", "source_url", "account", "title", "duration", "width", "height",
+                    "screen_grid", "screen_times", "usable_segments", "clip_id", "watermark_status",
+                )}
+                row["deferred_burn_salvage"] = bool(
+                    screening.get("deferred_burn_salvage") or c.get("deferred_burn_salvage")
+                )
+                row["needs_segment_lama"] = bool(
+                    screening.get("needs_segment_lama") or c.get("needs_segment_lama")
+                    or row["deferred_burn_salvage"]
+                )
+                return row
+
+            footage_for_prompt = [_footage_row(c) for c in clips]
+            segment_lama_clips = []
+            for c in clips:
+                row = dict(c)
+                screening = row.get("screening") if isinstance(row.get("screening"), dict) else {}
+                if screening.get("deferred_burn_salvage") or screening.get("needs_segment_lama") or row.get("deferred_burn_salvage"):
+                    segment_lama_clips.append({
+                        "clip_id": row.get("clip_id"),
+                        "path": row.get("path"),
+                        "duration": row.get("duration"),
+                        "width": row.get("width"),
+                        "height": row.get("height"),
+                        "screen_times": row.get("screen_times") or screening.get("screen_times"),
+                        "screening": {
+                            k: screening.get(k)
+                            for k in (
+                                "deferred_burn_salvage", "needs_segment_lama", "salvaged",
+                                "demote_reason", "repair_hint", "frames", "screen_times",
+                            )
+                            if k in screening
+                        },
+                        "deferred_burn_salvage": True,
+                        "needs_segment_lama": True,
+                    })
+            (task_dir / "work").mkdir(parents=True, exist_ok=True)
+            (task_dir / "work" / "clips_for_segment_lama.json").write_text(
+                json.dumps({"clips": segment_lama_clips}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             from .collect import MARKET_LANGUAGE, resolve_ffmpeg
             market = str(request.get("market") or "MX")
             locale, language = MARKET_LANGUAGE.get(market, ("en", "English"))
@@ -642,13 +681,7 @@ class Producer:
                 assignments.append({
                     "video_index": i,
                     "clip_ids": [str(c.get("clip_id")) for c in bundle if c.get("clip_id")],
-                    "clips": [
-                        {k: c.get(k) for k in (
-                            "clip_id", "path", "source_url", "account", "title", "duration",
-                            "width", "height", "screen_grid", "screen_times", "usable_segments",
-                        )}
-                        for c in bundle
-                    ],
+                    "clips": [_footage_row(c) for c in bundle],
                 })
             extra = {
                 "footage_json": json.dumps(footage_for_prompt, ensure_ascii=False, indent=2),
@@ -664,6 +697,8 @@ class Producer:
                 "example_mg_path": str(EXAMPLE_MG_PATH),
                 "ffmpeg": resolve_ffmpeg(),
                 "product_definition": getattr(collection, "product_definition", "") or str(request.get("product") or ""),
+                "segment_lama_clips_path": str(task_dir / "work" / "clips_for_segment_lama.json"),
+                "segment_lama_workdir": str(task_dir / "work" / "segment_lama"),
             }
             self._product_definition = extra["product_definition"]
             self._cta = extra["cta_example"]
