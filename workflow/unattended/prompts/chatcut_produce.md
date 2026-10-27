@@ -43,6 +43,7 @@
    - 跑（只要有 deferred 素材）：
      `python -m workflow.unattended.burn_repair --used-segments {{work_dir}}/used_shots.json --clips {{segment_lama_clips_path}} --workdir {{segment_lama_workdir}} --ffmpeg {{ffmpeg}}`
    - 读 stdout JSON 的 `replacements[]`：对每条 `push_asset({"filePath": repaired_path, "type":"video"})`，再用 `edit_item` **updates** 把对应 V1 镜头换成新 `assetId`，并设 `sourceIn: 0`（整数微秒）、`durationFrames` 保持原镜头时长。
+   - CLI 会把结果写到 `{{segment_lama_workdir}}/segment_lama_result.json`；**无人值守硬门**：若用了 `needs_segment_lama` 素材却没有这份成功结果，即使 export 了也会 `produce_failed`（AC-8，不靠提示词自觉）。
    - **禁止**为求快改用 boxblur / delogo / 灰色糊条；LaMa 失败就修参数重试或换其它可用 KEEP 镜头，不要降级糊字。
    - 再 `preview_timeline` 抽查：源烧录字应消失；MG 字幕保留。
 8. **导出**：对每条成片 `export` 到 `export_paths_json` 中对应路径（count=1 时即 `{{export_path}}`）→ `track_progress` wait。

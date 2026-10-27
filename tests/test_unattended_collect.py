@@ -1877,3 +1877,92 @@ def test_repair_used_segments_calls_lama_with_window(tmp_path, monkeypatch):
     assert out["replacements"][0]["repaired_path"] == str(repaired)
     assert out["replacements"][0]["new_source_in_s"] == 0.0
     assert out["engines"] == ["lama"]
+
+
+def test_segment_lama_gate_fails_when_deferred_used_without_repair(tmp_path):
+    """Deferred KEEP on timeline + no successful used-segment repair → gate fail."""
+    from workflow.unattended.burn_repair import assert_used_segment_lama_gate
+    clips = [{
+        "clip_id": "burn1",
+        "path": str(tmp_path / "burn1.mp4"),
+        "deferred_burn_salvage": True,
+        "needs_segment_lama": True,
+        "screening": {"deferred_burn_salvage": True, "needs_segment_lama": True},
+    }]
+    (tmp_path / "burn1.mp4").write_bytes(b"x")
+    produce = {
+        "ok": True,
+        "footage_used": [{"path": str(tmp_path / "burn1.mp4"), "clip_id": "burn1", "source_in_s": 2.0, "duration_s": 2.0}],
+    }
+    ok, reason, details = assert_used_segment_lama_gate(
+        clips=clips,
+        produce_result=produce,
+        segment_lama_workdir=tmp_path / "segment_lama",
+    )
+    assert ok is False
+    assert details.get("required") is True
+    assert "burn1" in details.get("needed_clip_ids", [])
+    assert "produce" in reason.lower() or "AC-8" in reason or "拒绝" in reason
+
+
+def test_segment_lama_gate_passes_when_repaired(tmp_path):
+    from workflow.unattended.burn_repair import (
+        assert_used_segment_lama_gate,
+        write_segment_lama_result,
+    )
+    src = tmp_path / "burn2.mp4"
+    src.write_bytes(b"x")
+    repaired = tmp_path / "segment_lama" / "repaired.mp4"
+    repaired.parent.mkdir(parents=True, exist_ok=True)
+    repaired.write_bytes(b"ok")
+    clips = [{
+        "clip_id": "burn2",
+        "path": str(src),
+        "needs_segment_lama": True,
+        "screening": {"deferred_burn_salvage": True, "needs_segment_lama": True},
+    }]
+    write_segment_lama_result(tmp_path / "segment_lama", {
+        "ok": True,
+        "skipped": False,
+        "replacements": [{
+            "clip_id": "burn2",
+            "source_path": str(src),
+            "repaired_path": str(repaired),
+            "source_in_s": 2.0,
+            "duration_s": 2.0,
+            "new_source_in_s": 0.0,
+        }],
+        "errors": [],
+    })
+    produce = {
+        "ok": True,
+        "footage_used": [{"path": str(src), "clip_id": "burn2", "source_in_s": 2.0, "duration_s": 2.0}],
+    }
+    ok, reason, details = assert_used_segment_lama_gate(
+        clips=clips,
+        produce_result=produce,
+        segment_lama_workdir=tmp_path / "segment_lama",
+    )
+    assert ok is True, reason
+    assert details.get("required") is True
+    assert not details.get("missing_clip_ids")
+
+
+def test_segment_lama_gate_skips_clean_keep(tmp_path):
+    from workflow.unattended.burn_repair import assert_used_segment_lama_gate
+    clean = tmp_path / "clean.mp4"
+    clean.write_bytes(b"x")
+    clips = [{
+        "clip_id": "clean1",
+        "path": str(clean),
+        "screening": {"accepted": True},
+    }]
+    produce = {"ok": True, "footage_used": [{"path": str(clean), "clip_id": "clean1"}]}
+    ok, reason, details = assert_used_segment_lama_gate(
+        clips=clips,
+        produce_result=produce,
+        segment_lama_workdir=tmp_path / "segment_lama",
+    )
+    assert ok is True
+    assert details.get("required") is False
+    assert "跳过" in reason or "无 needs_segment_lama" in reason
