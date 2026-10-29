@@ -113,7 +113,7 @@ LaMa 局部修补（torch/opencv，体积数 GB）不属于基础安装，需要
 
 参考 `config/codex-mcp.windows.example.toml`，把 `<项目目录>` 替换为实际路径后合并到员工自己的 Codex 配置。MCP 通过本机 API 工作，使用前在项目目录运行 `scripts\start.bat` 启动本机服务（仅监听 127.0.0.1:8765）。
 
-## 5.1 首次部署必做（一次性）：ChatCut MCP + 金丝雀
+## 5.1 首次部署必做（一次性）：ChatCut MCP（金丝雀为可选调试）
 
 桌面出片与可选调试路径都依赖 Codex 真正“看见” `chatcut_desktop` MCP 工具；看不到时会回退到 Computer Use / ChatCut 应用内 AI Agent，消耗 credits。首次部署（以及每次升级 ChatCut 或 Codex 后）必须完成下列**一次性**步骤；日常出片不必重复：
 
@@ -181,7 +181,7 @@ powercfg /change monitor-timeout-ac 30
 | 应用内 AI Agent 违规检测日志 | Windows 默认读 `%LOCALAPPDATA%\ChatCut\logs\agent.log` |
 | 正式端到端（采集→剪辑→导出） | **未在 Windows 实机跑过** |
 
-## 8. 客户机最小金丝雀（首次部署必做）
+## 8. 可选调试：客户机最小金丝雀
 
 在 `<项目目录>`、ChatCut 已打开且已登录时。优先在 **Codex 桌面版**完成等价验收（出一条可播短片到 `delivery/`）。下列命令属**可选调试**（须已装 Codex CLI），便于工程师核对门禁与导出：
 
