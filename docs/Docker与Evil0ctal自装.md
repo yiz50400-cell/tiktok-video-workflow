@@ -1,4 +1,4 @@
-# Docker + Evil0ctal 客户自装（保量默认发现）
+# Docker + Evil0ctal 客户自装（保量首装必装）
 
 更新：2026-10-27（Asia/Shanghai）。
 
@@ -8,8 +8,9 @@
 
 | 项 | 说明 |
 | --- | --- |
-| 角色 | **保量默认发现**：Docker+Evil 就绪时，无人值守采集**优先**用 Evil 搜 TikTok 页 URL，再交本仓 yt-dlp（试点：墨西哥眼霜一类可从数十条提到上百条候选） |
-| 降级 | Evil/Docker **未就绪**（探针失败或缺 API key）时，自动降级 Codex web search → yt-dlp，仍能出片；缺 Docker 不会卡死 |
+| 角色 | **保量首装必装**：能装 Docker（Desktop 或 WSL2+Engine）的客户机必须装本栈；就绪后采集**必须**用 Evil 搜 TikTok 页 URL，再交本仓 yt-dlp（试点：墨西哥眼霜一类可从数十条提到上百条候选） |
+| 就绪 | `/readyz` ok **且** `browser-rpc` healthy **且** `VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE` 已接入 Codex |
+| 降级 | 仅探针失败 / browser-rpc 不健康 / 缺 API key / **确实**无法安装 Docker 时，才降级 Codex web search → yt-dlp（薄池）；不要把「未装」写成默认可选项 |
 | 本仓库代码 | `workflow/unattended/evil_discovery.py` 已接入 `collect_footage`；本页写客户机自装与密钥放置 |
 | 下载 | Evil **只**负责搜 URL；**下载继续用 yt-dlp**（`requirements-collect.txt`） |
 | 登录 | 推荐 **guest + browser**；**不要**导入客户 TikTok 业务号 cookie |
@@ -109,7 +110,7 @@ docker compose -p dtk -f docker/compose.yml --profile browser up -d --build --wa
 curl -sS http://127.0.0.1:8000/readyz
 ```
 
-期望：`api` / `worker` / `postgres` / `redis` / `browser-rpc` 共 **5 个服务 healthy**；控制台建 API Key；本工作流侧仍配 `VW_EVIL_API_KEY`（或 `VW_EVIL_API_KEY_FILE`）与可选 `VW_EVIL_API_BASE=http://127.0.0.1:8000`。
+期望：`api` / `worker` / `postgres` / `redis` / `browser-rpc` 共 **5 个服务 healthy**；控制台建 API Key；本工作流侧把 `VW_EVIL_API_KEY`（或 `VW_EVIL_API_KEY_FILE`）写进 Codex `config.toml` 的 `[shell_environment_policy.set]`（可选 `VW_EVIL_API_BASE=http://127.0.0.1:8000`）。**禁止**把密钥正文提交进 Git。
 
 Windows 宿主上的 Python 无人值守访问 `127.0.0.1:8000`：WSL2 默认会把 Ubuntu 里发布的端口转到宿主机 loopback；若不通，在 `docker/compose` 确认 api 绑定 `127.0.0.1:8000:8000`，或查 `wsl hostname -I` 后用该 IP（并注意防火墙）。
 
@@ -321,7 +322,7 @@ docker compose -p dtk -f docker/compose.yml --profile browser up -d
 
 - `.env`、管理员密码、`dtk_` API Key：**仅本机私密保存**，不进 Git、不进客户交付包、不发群。
 - **禁止**导入客户 TikTok 店铺/达人业务号 cookie。
-- Evil 与本工作流仓库**目录分离**；采集默认探测本机 Evil API，就绪则加厚，否则降级 Codex。
+- Evil 与本工作流仓库**目录分离**；采集开搜前必须探针：就绪则必须 Evil 加厚，否则才降级 Codex（并记原因）。
 - 对外暴露 `0.0.0.0:8000` 需自备 TLS 与访问控制；默认 loopback 即可。
 - 第三方非官方 API，平台规则与可用性可能变化；出问题先查 <https://douyin.wtf/> 与 compose 日志。
 
@@ -331,7 +332,7 @@ docker compose -p dtk -f docker/compose.yml --profile browser up -d
 2. `curl http://127.0.0.1:8000/readyz` → ok  
 3. 控制台 Identities：至少 1 条 TikTok active（guest）  
 4. `search/posts` 某眼霜相关词能返回带 `/video/` 的 `web_url`  
-5. 配置 `VW_EVIL_API_KEY`（或 `VW_EVIL_API_KEY_FILE`）后跑无人值守：日志出现「采集-Evil 就绪」且候选池明显厚于纯 web_search；关掉 Docker 后再跑应出现「Evil 降级 Codex」且仍能出到 `delivery/`
+5. 验收就绪三件套：`/readyz` ok + `browser-rpc` healthy + Codex 已导出 `VW_EVIL_API_KEY`/`VW_EVIL_API_KEY_FILE`；再跑无人值守应出现「采集-Evil 就绪」且候选池明显厚于纯 web_search。人为停掉 Docker 后再跑应出现「Evil 降级 Codex」且仍能出到 `delivery/`（降级是兜底，不是首装默认）
 
 ---
 

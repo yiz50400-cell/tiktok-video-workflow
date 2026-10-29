@@ -52,3 +52,17 @@ codex exec -m gpt-5.6-sol -p unattended-chatcut \
 ## ChatCut 沙箱
 
 制作必须能访问 ChatCut 的本地 `mcp.sock`。`workspace-write` 会被拒绝（Operation not permitted），调试 worker 因此使用 `-s danger-full-access`，同时保持 `approval_policy=never`。日志会脱敏 bearer token。
+
+## Evil API key（保量发现）
+
+保量采集要让 Codex/shell 看见 Evil 密钥。把下面片段拷进用户 `~/.codex/config.toml`（桌面出片），或拷进本 profile（`unattended-chatcut.config.toml`；调试 worker 用 `--ignore-user-config` 时必须写在 profile 里）。**只写密钥文件绝对路径，禁止把 key 正文写进仓库或 toml。**
+
+```toml
+# Evil 保量发现：指向本机 dtk API key 文件（路径按客户机改）
+[shell_environment_policy.set]
+VW_EVIL_API_KEY_FILE = "/absolute/path/to/dtk_api_key.txt"
+# 也可直接：VW_EVIL_API_KEY = "dk_..."（勿提交；优先用 FILE）
+# 可选：VW_EVIL_API_BASE = "http://127.0.0.1:8000"
+```
+
+就绪验收仍见 [Docker与Evil0ctal自装](Docker与Evil0ctal自装.md)：`/readyz` ok + `browser-rpc` healthy + 上述 env 已导出。
