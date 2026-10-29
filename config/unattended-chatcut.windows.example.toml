@@ -60,3 +60,9 @@ enabled_tools = [
 
 [mcp_servers.chatcut_desktop.env]
 CHATCUT_MCP_CLIENT = "codex_app"
+
+# Evil 保量发现（拷到客户机后取消注释并改成真实绝对路径；禁止提交真实密钥）
+# [shell_environment_policy.set]
+# VW_EVIL_API_KEY_FILE = "/absolute/path/to/dtk_api_key.txt"
+# # 或：VW_EVIL_API_KEY = "dk_..."（勿提交；优先 FILE）
+# # 可选：VW_EVIL_API_BASE = "http://127.0.0.1:8000"
