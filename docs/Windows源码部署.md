@@ -1,18 +1,18 @@
 # Windows 源码部署（当前交付方式）
 
-更新：2026-10-27（Asia/Shanghai）。本页是 Windows 客户的唯一部署说明。交付方式为 **GitHub 源码下载 + 客户现有 Codex 作为工作台**，不提供安装包、Electron 桌面端或常驻网页。旧的桌面安装包说明见 [Windows桌面交付-2026-10-14](Windows桌面交付-2026-10-14.md)（历史归档）。
+更新：2026-10-29（Asia/Shanghai）。本页是 Windows 客户的唯一部署说明。交付方式为 **GitHub 源码下载 + 客户现有 Codex 桌面版出片**，不提供安装包、Electron 桌面端或常驻网页。旧的桌面安装包说明见 [Windows桌面交付-2026-10-14](Windows桌面交付-2026-10-14.md)（历史归档）。
 
 范围：到本机成片、独立字幕、中文说明和本机交付包结束。第07步发布（紫鸟、TikTok Studio、上传、草稿、挂商品、发布）不在范围内，由员工手动完成。
 
 ## 1. 前置条件
 
-- Windows 10/11 x64，已安装并登录 **Codex 桌面版**（客户的工作台：投任务、查进度、拿成片都在这里）。
-- **必装：Codex 命令行作为后台引擎**（客户日常不用打开它）。无人值守值班程序靠它调用 AI，只有桌面版时会报“未找到 Codex 运行程序”。安装：`npm i -g @openai/codex`，然后运行 `codex login`，用与桌面版**同一个账号**登录；**禁止**拷贝他人的 `auth.json` / `config.toml` 或任何 bearer 密钥到本机；装好后 `codex --version` 能输出版本即可（默认位于 `%APPDATA%\npm\codex.cmd`）。
-- [uv](https://docs.astral.sh/uv/)（PowerShell：`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`）。
-- Python 3.12（可由 uv 自动获取：`uv python install 3.12`）。
+- Windows 10/11 x64，已安装并登录 **Codex 桌面版**（**客户默认工作台**：投任务、查进度、拿成片都在这里；日常**只开桌面版**，不必开 CLI、不必挂后台 `watch`）。
+- [uv](https://docs.astral.sh/uv/)（PowerShell：`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`）。属**一次性安装**。
+- Python 3.12（可由 uv 自动获取：`uv python install 3.12`）。属**一次性安装**。
 - **ChatCut Desktop（Windows x64）** 已安装、至少打开一次并登录同一账号。官方下载：`https://api.chatcut.io/desktop/download/windows`。制作期间保持 ChatCut 开着。
 - 采集 TikTok 素材需要能访问 TikTok 的网络（客户机若需代理/VPN，请先配好；未连通时 yt-dlp 会 403/超时）。
-  - **Clash Verge**：仅「规则」模式时常**不**接管 Python/yt-dlp 命令行。采集卡住并报 `TikTok 不可达` / `访问受限` 时，先切 **全局** 或打开 **TUN/系统代理**，用浏览器打开 `https://www.tiktok.com` 确认能进；仍不行再换节点/会话。也可在启动 `watch` 的同一终端设 `$env:HTTPS_PROXY="http://127.0.0.1:7897"`（端口以 Clash 混合端口为准；可用 `VW_YTDLP_PROXY` 只给 yt-dlp）。空转多轮检索修不好网络问题。
+  - **Clash Verge**：仅「规则」模式时常**不**接管 Python/yt-dlp。采集卡住并报 `TikTok 不可达` / `访问受限` 时，先切 **全局** 或打开 **TUN/系统代理**，用浏览器打开 `https://www.tiktok.com` 确认能进；仍不行再换节点/会话。调试采集终端时可设 `$env:HTTPS_PROXY="http://127.0.0.1:7897"`（端口以 Clash 混合端口为准；可用 `VW_YTDLP_PROXY` 只给 yt-dlp）。空转多轮检索修不好网络问题。
+- **可选调试（非默认）**：若要用 `unattended.py once --produce` / `watch` 或门禁脚本走 `codex exec`，再装 Codex CLI：`npm i -g @openai/codex`，然后 `codex login`（与桌面版**同一账号**）；`codex --version` 能输出版本即可（默认 `%APPDATA%\npm\codex.cmd`）。**禁止**拷贝他人的 `auth.json` / `config.toml` 或任何 bearer 密钥。客户日常出片**不要求**装 CLI。
 - FFmpeg **不必单独安装**：`imageio-ffmpeg` 会随 `requirements.lock.txt` 带上；yt-dlp 在装了 `requirements-collect.txt` 后可用。
 - 配音（edge-tts）需要可用网络。
 
@@ -67,35 +67,36 @@ LaMa 局部修补（torch/opencv，体积数 GB）不属于基础安装，需要
 
 诊断报告写入 `.runtime/windows-engine-check/`。只有在 Windows 上实际产生的报告才算 Windows 平台验收，macOS 结果不能替代。
 
-## 4. 日常使用（默认 = 无人值守）
+## 4. 日常使用（默认 = Codex 桌面版出片）
 
-分工：**Codex 桌面版是工作台，后台引擎干活**。**默认就是无人值守**，不要把一句话任务带进对话逐步审中文稿 / 葡语稿 / 音色试听。
+分工：**Codex 桌面版出片**；ChatCut 保持打开。**不要**挂后台 `watch`，**不要**日常开 Codex CLI。不要把一句话任务带进对话逐步审中文稿 / 葡语稿 / 音色试听。
 
-| 客户说法 | Codex 必须做 |
+| 客户说法 | Codex 桌面版必须做 |
 | --- | --- |
-| 「启动视频工作流」 | 确认 ChatCut 已打开；接通电源时不睡眠（见 §5.2）；在项目目录后台启动 `.venv\Scripts\python.exe -X utf8 scripts\unattended.py watch`（每 30 秒扫收件箱）。**不要设开机自启。** |
-| 一句话任务（可多条） | `.venv\Scripts\python.exe -X utf8 scripts\unattended.py enqueue --text "..."`；由 `watch` 制作，或单次验证用 `once --produce` |
-| 「做完了吗」 | `unattended.py list`；成片在各任务 `delivery/` |
+| 「启动视频工作流」 | 确认 ChatCut 已打开；接通电源时不睡眠（见 §5.2）；确认 §2 / §5.1 一次性安装已完成。**不要**后台启动 `watch`，**不要设开机自启。** |
+| 一句话任务（可多条） | 在桌面会话里按仓库规则直接制作；成片写入各任务 `delivery/` |
+| 「做完了吗」 | 打开对应任务的 `delivery/`，或在桌面会话查进度 |
+
+**禁止默认**：在 Codex 对话里展示中文稿等确认、当地语言全文确认、音色试听页确认、代表样片逐步批准。仅当客户**明确要求**对话精修时，才使用下面的 `workflow.py` 交互链路。
+
+### 4.1 可选调试：`watch` / `once --produce` / Codex CLI（非默认）
+
+工程师排障、金丝雀或收件箱值班时再用。须已装 Codex CLI（与桌面同账号）。代码路径保留，**不是**客户日常默认：
 
 ```powershell
-# 启动值班（「启动视频工作流」）
-.venv\Scripts\python.exe -X utf8 scripts\unattended.py watch
-
-# 投任务（可连续多条）
+# 投任务 + 单次制作（调试/金丝雀）
 .venv\Scripts\python.exe -X utf8 scripts\unattended.py enqueue --text "巴西润唇膏做3条，真人试用种草，无自带素材"
-.venv\Scripts\python.exe -X utf8 scripts\unattended.py enqueue --text "墨西哥唇釉做1条，自然带货"
-
-# 单次验证（可选；正式用 watch 即可）
 .venv\Scripts\python.exe -X utf8 scripts\unattended.py once --produce
+
+# 可选值班（每 30 秒扫收件箱）；勿当客户默认，勿设开机自启
+.venv\Scripts\python.exe -X utf8 scripts\unattended.py watch
 
 .venv\Scripts\python.exe -X utf8 scripts\unattended.py list
 ```
 
-投完即可关闭对话离开。每条任务做好或失败时，值班程序会在 Windows 右下角弹**一次**系统通知（任务号与成片位置或失败原因）；不想要提醒可设 `WORKFLOW_NOTIFY=0`。
+该路径做好/失败时可弹 Windows 通知；不想要提醒可设 `WORKFLOW_NOTIFY=0`。
 
-**禁止默认**：在 Codex 对话里展示中文稿等确认、当地语言全文确认、音色试听页确认、代表样片逐步批准。仅当客户**明确要求**对话精修时，才使用下面的 `workflow.py` 交互链路。
-
-### 4.1 高级：对话精修 / 直接 CLI（非默认）
+### 4.2 高级：对话精修 / 直接 CLI（非默认）
 
 ```powershell
 .venv\Scripts\python.exe -X utf8 scripts\workflow.py create --title "商品巴西批次" --product "指定商品" --market BR --count 7 --style "达人试用"
@@ -112,9 +113,9 @@ LaMa 局部修补（torch/opencv，体积数 GB）不属于基础安装，需要
 
 参考 `config/codex-mcp.windows.example.toml`，把 `<项目目录>` 替换为实际路径后合并到员工自己的 Codex 配置。MCP 通过本机 API 工作，使用前在项目目录运行 `scripts\start.bat` 启动本机服务（仅监听 127.0.0.1:8765）。
 
-## 5.1 首次部署必做：ChatCut MCP 门禁 + 金丝雀制作
+## 5.1 首次部署必做（一次性）：ChatCut MCP + 金丝雀
 
-无人值守制作依赖 Codex 会话真正“看见” `chatcut_desktop` MCP 工具；看不到时 Codex 会回退到 Computer Use / ChatCut 应用内 AI Agent，消耗 credits。首次部署（以及每次升级 ChatCut 或 Codex 后）必须：
+桌面出片与可选调试路径都依赖 Codex 真正“看见” `chatcut_desktop` MCP 工具；看不到时会回退到 Computer Use / ChatCut 应用内 AI Agent，消耗 credits。首次部署（以及每次升级 ChatCut 或 Codex 后）必须完成下列**一次性**步骤；日常出片不必重复：
 
 1. 安装无人值守 ChatCut profile（**不要照抄 macOS 的 Library 路径**）：
    - 复制 `config/unattended-chatcut.windows.example.toml` → `%USERPROFILE%\.codex\unattended-chatcut.config.toml`（若设置了 `CODEX_HOME` 则用 `%CODEX_HOME%\unattended-chatcut.config.toml`）。
@@ -127,16 +128,16 @@ LaMa 局部修补（torch/opencv，体积数 GB）不属于基础安装，需要
    .venv\Scripts\python.exe -X utf8 -c "from workflow.unattended.codex_mcp_gate import verify_codex_chatcut_mcp_ready as v; print(v())"
    ```
    必须输出 `ok=True` 且 `tools` ≥ 50；否则先修配置，不要开始制作。producer 每次制作前也会自动执行该门禁并 fail-fast。
-3. 跑一条短金丝雀制作：确认 ChatCut 中已有工程 `TEST-无人值守-20261017`（没有就先建同名本地工程）。先投递任意一句话，再 `.venv\Scripts\python.exe scripts\unattended.py once --produce --canary`（只导出该测试工程，不采集；启动方式与正式制作相同：`codex exec -p unattended-chatcut -m gpt-5.6-sol -s danger-full-access --enable code_mode_host --disable computer_use`）。验收：
+3. 跑一条短金丝雀（**可选调试**命令；也可在 Codex 桌面版里做等价验收）：确认 ChatCut 中已有工程 `TEST-无人值守-20261017`（没有就先建同名本地工程）。若用 CLI：先投递任意一句话，再 `.venv\Scripts\python.exe scripts\unattended.py once --produce --canary`（只导出该测试工程，不采集；该调试路径会调用 `codex exec -p unattended-chatcut ...`，故需已装 Codex CLI）。验收：
    - Codex 日志出现 `mcp: chatcut_desktop/...` 调用，且无 Computer Use / 应用内 AI 痕迹（ChatCut `logs/agent.log` 无新的 `Agent SDK attempt started`）；
    - 导出 mp4 存在且可播放；
    - ChatCut credits 前后不变。
    金丝雀工程保留归档，不要删除。
-4. 金丝雀通过后再跑一条正式端到端：`scripts\unattended.py enqueue --text "墨西哥<商品>做1条，TikTok种草风格"` → `once --produce`（默认 production 模式）。流水线依次为：ChatCut 健康探针 → MCP 门禁 → 采集（优先本机 Evil 搜 TikTok 视频页，未就绪则 Codex web search → yt-dlp 下载 → 竖屏/时长/来源校验 → 联系表）→ Codex 直连 MCP 剪辑导出 → 成片校验（竖屏 H.264、8–60 秒、无口播必须静音、只用采集清单内素材、不是 TEST 工程、无 submit_*/Computer Use）。采集后还有视觉初筛（同款形态/原片烧录文字/水印/生活方式镜头），导出后逐镜头自动复核，不合格自动重剪最多 2 次，仍不合格不交付。采集需要能访问 TikTok 的网络（客户机若需代理请先配好）；合格素材少于 3 条时直接失败，不会用库存/样例素材顶替。同一类商品做过的成片会记进 `config/discovery-seeds/used/` 台账，下次优先找没用过的新素材，新素材不够才用旧素材补位。
+4. 金丝雀通过后再跑一条正式端到端：优先在 **Codex 桌面版**一句话投「墨西哥<商品>做1条，TikTok种草风格」；若用可选调试 CLI：`scripts\unattended.py enqueue --text "..."` → `once --produce`。流水线依次为：ChatCut 健康探针 → MCP 门禁 → 采集（优先本机 Evil 搜 TikTok 视频页，未就绪则 Codex web search → yt-dlp 下载 → 竖屏/时长/来源校验 → 联系表）→ Codex 直连 MCP 剪辑导出 → 成片校验（竖屏 H.264、8–60 秒、无口播必须静音、只用采集清单内素材、不是 TEST 工程、无 submit_*/Computer Use）。采集后还有视觉初筛（同款形态/原片烧录文字/水印/生活方式镜头），导出后逐镜头自动复核，不合格自动重剪最多 2 次，仍不合格不交付。采集需要能访问 TikTok 的网络（客户机若需代理请先配好）；合格素材少于 3 条时直接失败，不会用库存/样例素材顶替。同一类商品做过的成片会记进 `config/discovery-seeds/used/` 台账，下次优先找没用过的新素材，新素材不够才用旧素材补位。
 
-## 5.2 关闭自动睡眠（无人值守必做）
+## 5.2 关闭自动睡眠（制作期间必做）
 
-无人值守任务一次要跑十几到几十分钟，电脑睡眠/休眠会让 Codex、ChatCut 和下载中途断掉（我们在 Mac 上实测过：机器睡眠后任务直接失联）。客户机在**接通电源时**按下面设置（管理员 PowerShell / CMD）：
+一条制作常要跑十几到几十分钟，电脑睡眠/休眠会让 Codex、ChatCut 和下载中途断掉（我们在 Mac 上实测过：机器睡眠后任务直接失联）。客户机在**接通电源时**按下面设置（管理员 PowerShell / CMD）：
 
 ```bat
 powercfg /change standby-timeout-ac 0
@@ -152,7 +153,7 @@ powercfg /change monitor-timeout-ac 30
 
 ### Codex 账号：用客户自己的正式账号
 
-- 客户机上的 Codex 桌面版和 Codex CLI 都登录**客户自己的正式 Codex 账号**（两者同一账号）。
+- 客户机上的 **Codex 桌面版**登录**客户自己的正式 Codex 账号**（日常出片只需要桌面版）。若使用可选调试路径再装 CLI，则 CLI 与桌面版**同一账号**。
 - **不要**从我们开发机拷贝 `~/.codex/config.toml`、`auth.json` 或任何第三方/中转接口配置（base_url、bearer key 等）；客户机只用官方登录产生的配置。
 - 模型默认 `gpt-5.6-sol`，不强制；账号不支持（例如报 404 / 503 无可用渠道）时，直接换成账号可用的模型即可，不需要改代码：
   - 仅当前窗口生效：`set VW_CODEX_MODEL=gpt-5.6-astra`（PowerShell：`$env:VW_CODEX_MODEL="gpt-5.6-astra"`）
@@ -163,7 +164,7 @@ powercfg /change monitor-timeout-ac 30
 
 ## 6. 客户数据与资源
 
-- 音色池：每个市场须先完成音色试听批准（**建池时**，不是每条无人值守任务都在对话里试听）；制作配置中的 `voice_approval` 使用本机批准文件的绝对路径和 SHA-256。开发样片的巴西音色批准不随源码分发。
+- 音色池：每个市场须先完成音色试听批准（**建池时**，不是每条桌面出片任务都在对话里试听）；制作配置中的 `voice_approval` 使用本机批准文件的绝对路径和 SHA-256。开发样片的巴西音色批准不随源码分发。
 - 字体：包装配置使用本机字体文件的绝对路径和 SHA-256，不依赖 macOS 系统字体。
 - 编码器：Windows 使用 `libx264`；`h264_videotoolbox` 仅限 macOS。
 - 跨机器迁移已有方案时，按实际目录重新绑定资源并核对哈希。
@@ -176,13 +177,15 @@ powercfg /change monitor-timeout-ac 30
 | FFmpeg | 走 `imageio-ffmpeg`，Windows 默认 `libx264`（拒绝 `h264_videotoolbox`） |
 | yt-dlp 采集 | 需 `requirements-collect.txt`（含 yt-dlp、curl_cffi）+ 可访问 TikTok 的网络 |
 | ChatCut MCP 探针 / Codex 门禁 | 已支持按 `CHATCUT_MCP` 与常见 `%LOCALAPPDATA%` 路径查找；stdio JSON-RPC 在 Windows 上不再依赖 `select()` 管道 |
-| ChatCut **自动重启** | **未实现**（会 `NotImplementedError`）；无人值守前请保持 ChatCut 打开 |
+| ChatCut **自动重启** | **未实现**（会 `NotImplementedError`）；制作前请保持 ChatCut 打开 |
 | 应用内 AI Agent 违规检测日志 | Windows 默认读 `%LOCALAPPDATA%\ChatCut\logs\agent.log` |
 | 正式端到端（采集→剪辑→导出） | **未在 Windows 实机跑过** |
 
 ## 8. 客户机最小金丝雀（首次部署必做）
 
-在 `<项目目录>`、ChatCut 已打开且已登录时。金丝雀会导出名为 `TEST-无人值守-20261017` 的工程：若客户机还没有，先在 ChatCut 新建或复制一个**同名**本地工程（可放任意短竖屏素材），不要删除；没有该工程时 `--canary` 会失败。
+在 `<项目目录>`、ChatCut 已打开且已登录时。优先在 **Codex 桌面版**完成等价验收（出一条可播短片到 `delivery/`）。下列命令属**可选调试**（须已装 Codex CLI），便于工程师核对门禁与导出：
+
+金丝雀会导出名为 `TEST-无人值守-20261017` 的工程：若客户机还没有，先在 ChatCut 新建或复制一个**同名**本地工程（可放任意短竖屏素材），不要删除；没有该工程时 `--canary` 会失败。
 
 ```bat
 .venv\Scripts\python.exe -X utf8 scripts\check_windows_engine.py --require-windows
@@ -191,7 +194,7 @@ powercfg /change monitor-timeout-ac 30
 .venv\Scripts\python.exe -X utf8 scripts\unattended.py once --produce --canary
 ```
 
-验收：引擎报告 `windows_platform_executed=true`；健康探针 `status=healthy`；门禁 `ok=True` 且 `tools`≥50；金丝雀导出 mp4 可播放；ChatCut credits 前后不变；Codex 日志有 `mcp: chatcut_desktop/...`，无应用内 AI。金丝雀通过后再跑一句正式任务。
+验收：引擎报告 `windows_platform_executed=true`；健康探针 `status=healthy`；门禁 `ok=True` 且 `tools`≥50；金丝雀导出 mp4 可播放；ChatCut credits 前后不变；无应用内 AI。金丝雀通过后再在桌面版跑一句正式任务。
 
 ## 9. 待 Windows 实机验证
 
