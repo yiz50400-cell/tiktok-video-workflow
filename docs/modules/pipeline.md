@@ -27,7 +27,7 @@
 
 | 输入/证据 | 执行与缺项时的待办 |
 | --- | --- |
-| collection：brand、product、seeds、urls、local_sources、download、resolve_urls、max_candidates | 明确来源的采集、转码和下载；校验原片后导入任务。来源由Codex搜索并核实，自动搜索尚待接通 |
+| collection：brand、product、seeds、urls、local_sources、download、resolve_urls、max_candidates | 明确来源的采集、转码和下载；校验原片后导入任务。TikTok URL 发现走本机 Evil（就绪必须 Evil；探针失败/缺密钥才降级 Codex 搜索） |
 | item.asset_id | 校验素材属于当前任务，运行分析并返回联系图和manifest |
 | item.repair（可选） | mask_spec、model、start、duration、device；隔离调用LaMa并保存task和对比画面。新输出等待视觉复核 |
 | repair.review_path | 当前task和修补输出哈希，reviewer，status=passed_internal_visual_review；full_playback、product_action_preserved、outside_mask_review均为true。通过后入库并保留原片血缘 |

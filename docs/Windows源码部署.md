@@ -20,17 +20,17 @@
 
 > **尚未在目标 Windows 实机验收**：下列步骤与脚本已按 Windows 差异改过，但本仓库维护机是 macOS，不能用 Mac 结果替 Windows 平台验收。
 
-## 1.1 保量采集：Docker + Evil0ctal（优先）
+## 1.1 保量采集：Docker + Evil0ctal（首装必装）
 
-要稳定加厚候选素材池，客户机**优先**按 [Docker与Evil0ctal自装](Docker与Evil0ctal自装.md) 安装 Docker + Evil0ctal（`--profile browser`），并把 API key 配到 `VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE`（可选 `VW_EVIL_API_BASE=http://127.0.0.1:8000`）。装好后确认 `http://127.0.0.1:8000/readyz` 为 ok。
+保量交付的客户机：**必装** Docker + Evil0ctal（`--profile browser`），不要写成「可选 / 可跳过」。按 [Docker与Evil0ctal自装](Docker与Evil0ctal自装.md) 安装后，把 API key 接到 Codex：`VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE`（可选 `VW_EVIL_API_BASE=http://127.0.0.1:8000`）。**禁止**把密钥正文提交进 Git。
 
 | 路径 | 何时用 |
 | --- | --- |
 | **Docker Desktop**（推荐） | Win10/11 较新、安装器接受、能开虚拟化；内存建议给 Docker ≥ 8 GB。见自装文档 §2 |
-| **WSL2 Ubuntu + Docker Engine**（旁路） | Win10 **旧版（如 21H1）** 装不上 Desktop、系统升级失败（`0x80073701` / `0x80070057`）时：**不必强升系统**，BIOS 开虚拟化后按自装文档 **§2.1** 在 Ubuntu 里装 Engine + Compose 跑同一套 Evil |
+| **WSL2 Ubuntu + Docker Engine**（旧机必装旁路） | Win10 **旧版（如 21H1）** 装不上 Desktop、系统升级失败（`0x80073701` / `0x80070057`）时：**不必强升系统**，BIOS 开虚拟化后按自装文档 **§2.1** 在 Ubuntu 里装 Engine + Compose 跑同一套 Evil——对保量仍是**必装**，不是可跳过 |
 
-- **就绪**：采集日志应出现「采集-Evil 就绪」，候选 URL 明显厚于纯 web search；`docker compose … ps` 里 api/worker/postgres/redis/browser-rpc 共 5 个 healthy。
-- **未装 / 探针失败**：自动降级 Codex web search → yt-dlp，**不要**因此卡死；仍可出片，只是候选池更薄。
+- **就绪验收（三者同时）**：① `http://127.0.0.1:8000/readyz` 为 ok；② `docker … ps` 里 **browser-rpc**（及 api/worker/postgres/redis）healthy；③ Codex/`config.toml` 已导出 `VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE`。采集日志应出现「采集-Evil 就绪」，候选 URL 明显厚于纯 web search。
+- **降级（非默认）**：仅当探针失败、browser-rpc 不健康、缺密钥、或机器**确实**无法安装 Docker 时，才降级 Codex web search → yt-dlp；仍可出片但候选池更薄，须记降级原因。不要未探针就声称「没装」。
 - Evil **只搜 URL**，下载仍用本仓 yt-dlp；不要拷贝他人的 `auth.json` / API key。
 - **8 GB 内存 + LaMa CPU**：Evil 可 healthy，LaMa salvage 会慢——属硬件限制，见自装文档 §2.1.6。
 
@@ -133,7 +133,7 @@ LaMa 局部修补（torch/opencv，体积数 GB）不属于基础安装，需要
    - 导出 mp4 存在且可播放；
    - ChatCut credits 前后不变。
    金丝雀工程保留归档，不要删除。
-4. 金丝雀通过后再跑一条正式端到端：优先在 **Codex 桌面版**一句话投「墨西哥<商品>做1条，TikTok种草风格」；若用可选调试 CLI：`scripts\unattended.py enqueue --text "..."` → `once --produce`。流水线依次为：ChatCut 健康探针 → MCP 门禁 → 采集（优先本机 Evil 搜 TikTok 视频页，未就绪则 Codex web search → yt-dlp 下载 → 竖屏/时长/来源校验 → 联系表）→ Codex 直连 MCP 剪辑导出 → 成片校验（竖屏 H.264、8–60 秒、无口播必须静音、只用采集清单内素材、不是 TEST 工程、无 submit_*/Computer Use）。采集后还有视觉初筛（同款形态/原片烧录文字/水印/生活方式镜头），导出后逐镜头自动复核，不合格自动重剪最多 2 次，仍不合格不交付。采集需要能访问 TikTok 的网络（客户机若需代理请先配好）；合格素材少于 3 条时直接失败，不会用库存/样例素材顶替。同一类商品做过的成片会记进 `config/discovery-seeds/used/` 台账，下次优先找没用过的新素材，新素材不够才用旧素材补位。
+4. 金丝雀通过后再跑一条正式端到端：优先在 **Codex 桌面版**一句话投「墨西哥<商品>做1条，TikTok种草风格」；若用可选调试 CLI：`scripts\unattended.py enqueue --text "..."` → `once --produce`。流水线依次为：ChatCut 健康探针 → MCP 门禁 → 采集（就绪必须 Evil 搜 TikTok 视频页；仅探针失败/缺密钥才降级 Codex web search → yt-dlp 下载 → 竖屏/时长/来源校验 → 联系表）→ Codex 直连 MCP 剪辑导出 → 成片校验（竖屏 H.264、8–60 秒、无口播必须静音、只用采集清单内素材、不是 TEST 工程、无 submit_*/Computer Use）。采集后还有视觉初筛（同款形态/原片烧录文字/水印/生活方式镜头），导出后逐镜头自动复核，不合格自动重剪最多 2 次，仍不合格不交付。采集需要能访问 TikTok 的网络（客户机若需代理请先配好）；合格素材少于 3 条时直接失败，不会用库存/样例素材顶替。同一类商品做过的成片会记进 `config/discovery-seeds/used/` 台账，下次优先找没用过的新素材，新素材不够才用旧素材补位。
 
 ## 5.2 关闭自动睡眠（制作期间必做）
 

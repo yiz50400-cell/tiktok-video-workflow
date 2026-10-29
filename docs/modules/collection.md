@@ -43,4 +43,4 @@
 
 主会话读取 `collection.json` 的 `candidates`，以 `raw_path`、`preview_path`、`sha256` 和四类状态作为资产入库条件；仅 `preview_status=validated` 才展示预览。`material_eligibility` 是同系列候选资格，不是 SKU、复用权或最终镜头批准。不得把 `saved_evidence_only` 当成实时 URL 解析，也不得把候选发现当成自动高表现搜索。共享 API/CLI/MCP、配置、依赖及 `.runtime` 入库由主会话负责；本模块没有并发改写。
 
-后续若要真正自动发现，需接通稳定的 TikTok 搜索/账号数据来源并单独验证账号访问、商品证据和近期表现；未实现的来源保持显式缺项。若以后有新素材或影响画面效果的参数变化，再展示对应新产物，不重验这批既有素材。
+TikTok 页 URL 自动发现已接本机 Evil（见 AGENTS / skill 硬门与 Docker与Evil0ctal自装）；账号级数据源与付费投放证据仍按实际能力，未实现的来源保持显式缺项。若以后有新素材或影响画面效果的参数变化，再展示对应新产物，不重验这批既有素材。

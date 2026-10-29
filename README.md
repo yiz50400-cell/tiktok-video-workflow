@@ -4,7 +4,7 @@
 
 当前范围到成片、独立字幕、中文说明和本机交付包结束；紫鸟、TikTok Studio、上传、草稿、挂商品和发布由员工自行手动完成。交付采用 GitHub 源码下载与本机部署。
 
-客户用一句话说清需求（可附素材路径）；桌面版按仓库规则自动采集/混剪、内部本地化与复核、配音剪辑并交付。仅当客户**明确要求**对话精修，或工程师调试时，才用 CLI / `watch` / `once --produce`。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，保量采集请装 Docker+Evil（默认发现；未装则降级 Codex 搜）见[Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
+客户用一句话说清需求（可附素材路径）；桌面版按仓库规则自动采集/混剪、内部本地化与复核、配音剪辑并交付。仅当客户**明确要求**对话精修，或工程师调试时，才用 CLI / `watch` / `once --produce`。默认创作方向与硬规则见[项目规则](AGENTS.md)，Windows 步骤见[Windows源码部署](docs/Windows源码部署.md)，保量首装**必装** Docker+Evil（Desktop 或 WSL2+Engine；就绪后默认 Evil 发现；仅探针失败才降级）见[Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)，耗时见[流程与耗时现状](docs/客户交付-流程与耗时现状.md)。
 
 
 ## 获取源码
@@ -22,7 +22,7 @@ Windows 客户请优先阅读 [docs/Windows源码部署.md](docs/Windows源码�
 
 主任务 API/CLI/MCP 已连接采集导入、分析、中文创作审计、准确中文确认、内部本地化审核、市场音色轮换、配置驱动制作、技术 QA 和本机交付。可选 LaMa 修补在隔离环境执行，须通过当前输出的视觉复核后进入后续步骤。每条保存阶段和证据，按序锁定音色，再受控并行制作；成功步骤校验哈希后复用，失败逐条恢复。素材预约关联原片区间，并核对既有本地素材台账。
 
-Codex 负责搜索、画面观察和语义创作；自动平台搜索、ASR/OCR、多员工身份及跨机器队列待实现。其他市场须先批准对应音色池。第07步发布接入暂停。负责人字段是记录，SQLite 用于本机执行与核验。
+Codex 负责画面观察和语义创作；TikTok URL 发现走本机 Evil（保量必装）；ASR/OCR、多员工身份及跨机器队列仍按实际能力。其他市场须先批准对应音色池。第07步发布接入暂停。负责人字段是记录，SQLite 用于本机执行与核验。
 
 
 ## Codex 账号与配置（必读）
@@ -67,9 +67,9 @@ uv pip install --python .venv/bin/python -r requirements.lock.txt -r requirement
 
 旧网页原型与 Electron 桌面壳已移入本机 `_archive/`，不进入源码仓库；Windows 安装包路线已停止（见 [历史归档](docs/Windows桌面交付-2026-10-14.md)）。默认业务服务返回 headless 状态。
 
-## Docker + Evil0ctal（保量默认发现）
+## Docker + Evil0ctal（保量首装必装）
 
-客户机要稳增素材量时，**优先安装** Docker Desktop + Evil0ctal（guest+browser）。就绪后无人值守默认走 Evil 搜 TikTok 页 URL → 本仓 yt-dlp/初筛；未装或探针失败则**自动降级** Codex web search → yt-dlp（仍能出片）。安装与密钥见 [Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)。
+保量交付的客户机：**必装** Docker + Evil0ctal（`--profile browser`；能装 Desktop 用 Desktop，旧 Win 装不上则 WSL2+Engine，仍是必装不是可跳过）。**就绪** = `/readyz` ok + `browser-rpc` healthy + `VW_EVIL_API_KEY` 或 `VW_EVIL_API_KEY_FILE` 已接入 Codex。就绪后默认 Evil 搜 TikTok 页 URL → 本仓 yt-dlp/初筛。仅探针失败或确实无法安装时才**降级** Codex web search → yt-dlp（薄池，须记原因）。安装与密钥见 [Docker与Evil0ctal自装](docs/Docker与Evil0ctal自装.md)。
 
 ## Windows 源码部署
 
@@ -112,7 +112,7 @@ Codex根据客户需求使用本地素材、按需采集或混合制作。使用
 | 一句话任务（可多条） | 在桌面会话里按仓库规则直接制作；成片写入 `delivery/` |
 | 「做完了吗」 | 打开对应任务的 `delivery/`，或在桌面会话查进度 |
 
-**一次性安装**（首装或换机，不是日常）：`git clone` → `uv venv` + 依赖 → 复制 ChatCut profile（Mac：`config/unattended-chatcut.config.toml` → `~/.codex/`；Win 见部署文档）→ 可选 Docker+Evil。可由 Codex 桌面版代跑终端步骤。
+**一次性安装**（首装或换机，不是日常）：`git clone` → `uv venv` + 依赖 → 复制 ChatCut profile（Mac：`config/unattended-chatcut.config.toml` → `~/.codex/`；Win 见部署文档）→ **保量必装** Docker+Evil（并接线 `VW_EVIL_API_KEY` / `VW_EVIL_API_KEY_FILE`）。可由 Codex 桌面版代跑终端步骤。
 
 硬规则：**禁止**默认进入员工交互审中文稿/当地语言稿/音色试听；**禁止** ChatCut 应用内 AI、Computer Use、`submit_*`；**禁止**拷贝他人 Codex `auth.json` / 密钥。无 BGM。自动放行写 audit，不是假冒用户签字。
 
